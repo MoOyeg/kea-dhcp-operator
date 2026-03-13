@@ -1,0 +1,55 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaServer
+metadata:
+  name: keaserver-example
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # --- DHCPv4 component ---
+  dhcp4:
+    valid-lifetime: 43200
+    # Use "net1" when attaching via a NetworkAttachmentDefinition (NAD).
+    interfaces-config:
+      interfaces:
+        - net1
+      dhcp-socket-type: raw
+    # Attach the pod to a secondary network via a NAD.
+    placement:
+      podAnnotations:
+        k8s.v1.cni.cncf.io/networks: "dhcp-net"
+    lease-database:
+      type: memfile
+      persist: true
+    subnet4:
+      - id: 1
+        subnet: "192.168.1.0/24"
+        pools:
+          - pool: "192.168.1.100 - 192.168.1.200"
+        option-data:
+          - name: routers
+            data: "192.168.1.1"
+          - name: domain-name-servers
+            data: "8.8.8.8, 8.8.4.4"
+    control-socket:
+      socket-type: unix
+      socket-name: /run/kea/kea-dhcp4-ctrl.sock
+    loggers:
+      - name: kea-dhcp4
+        severity: INFO
+        output-options:
+          - output: stdout
+
+  # --- Control Agent component ---
+  controlAgent:
+    http-host: "0.0.0.0"
+    http-port: 8000
+    control-sockets:
+      dhcp4:
+        socket-type: unix
+        socket-name: /run/kea/kea-dhcp4-ctrl.sock
+    loggers:
+      - name: kea-ctrl-agent
+        severity: INFO
+        output-options:
+          - output: stdout

@@ -1,0 +1,241 @@
+---
+# Role: vm_create
+# Creates and configures a KVM VM for single-node Kubernetes installation
+
+- name: Get storage pool path (if custom pool specified)
+  ansible.builtin.shell: |
+    virsh pool-dumpxml {{ vm_storage_pool }} | grep -oP '(?<=<path>).*(?=</path>)'
+  register: storage_pool_path
+  when: vm_storage_pool | length > 0
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  changed_when: false
+
+- name: Set storage path fact
+  ansible.builtin.set_fact:
+    vm_storage_path: "{{ storage_pool_path.stdout if (vm_storage_pool | length > 0) else '/var/lib/libvirt/images' }}"
+
+- name: Display storage information
+  ansible.builtin.debug:
+    msg: |
+      Storage pool: {{ vm_storage_pool if (vm_storage_pool | length > 0) else 'default (none)' }}
+      Storage path: {{ vm_storage_path }}
+
+- name: Create VM images directory
+  ansible.builtin.file:
+    path: "{{ vm_storage_path }}/{{ vm_name }}"
+    state: directory
+    mode: '0755'
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Check if base image already downloaded
+  ansible.builtin.stat:
+    path: "{{ vm_storage_path }}/{{ vm_name }}/base.qcow2"
+  register: base_image
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Download base cloud image
+  ansible.builtin.get_url:
+    url: "{{ base_image_url }}"
+    dest: "{{ vm_storage_path }}/{{ vm_name }}/base.qcow2"
+    mode: '0644'
+  when: not base_image.stat.exists
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Create VM OS disk from base image
+  ansible.builtin.command:
+    cmd: >
+      qemu-img create -f qcow2
+      -F qcow2
+      -b {{ vm_storage_path }}/{{ vm_name }}/base.qcow2
+      {{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.qcow2
+      {{ vm_disk_size }}G
+    creates: "{{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.qcow2"
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Resize VM OS disk
+  ansible.builtin.command:
+    cmd: >
+      qemu-img resize
+      {{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.qcow2
+      {{ vm_disk_size }}G
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  changed_when: true
+
+- name: Create cloud-init metadata
+  ansible.builtin.template:
+    src: meta-data.j2
+    dest: "{{ vm_storage_path }}/{{ vm_name }}/meta-data"
+    mode: '0644'
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Create cloud-init userdata
+  ansible.builtin.template:
+    src: user-data.j2
+    dest: "{{ vm_storage_path }}/{{ vm_name }}/user-data"
+    mode: '0644'
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Create cloud-init network-config
+  ansible.builtin.template:
+    src: network-config.j2
+    dest: "{{ vm_storage_path }}/{{ vm_name }}/network-config"
+    mode: '0644'
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Create cloud-init ISO
+  ansible.builtin.command:
+    cmd: >
+      genisoimage -output {{ vm_storage_path }}/{{ vm_name }}/cloud-init.iso
+      -volid cidata -joliet -rock
+      {{ vm_storage_path }}/{{ vm_name }}/user-data
+      {{ vm_storage_path }}/{{ vm_name }}/meta-data
+      {{ vm_storage_path }}/{{ vm_name }}/network-config
+    creates: "{{ vm_storage_path }}/{{ vm_name }}/cloud-init.iso"
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Create VM definition XML
+  ansible.builtin.template:
+    src: vm-definition.xml.j2
+    dest: "{{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.xml"
+    mode: '0644'
+  delegate_to: "{{ kvm_host }}"
+  become: true
+
+- name: Define VM
+  ansible.builtin.command:
+    cmd: virsh define {{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.xml
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  register: vm_define
+  changed_when: vm_define.rc == 0
+
+- name: Start VM
+  ansible.builtin.command:
+    cmd: virsh start {{ vm_name }}
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  register: vm_start
+  changed_when: vm_start.rc == 0
+  failed_when: vm_start.rc != 0 and 'already active' not in vm_start.stderr
+
+- name: Wait for VM to boot
+  ansible.builtin.pause:
+    seconds: 30
+    prompt: "Waiting for VM to boot..."
+
+- name: Wait for QEMU guest agent to be ready
+  ansible.builtin.shell: |
+    virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-ping"}' 2>/dev/null
+  register: guest_agent_ready
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  retries: 20
+  delay: 10
+  until: guest_agent_ready.rc == 0
+  ignore_errors: true
+  changed_when: false
+
+- name: Get VM MAC address
+  ansible.builtin.shell: |
+    virsh domiflist {{ vm_name }} | grep -oP '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -1
+  register: vm_mac_result
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  changed_when: false
+
+- name: Get IP address from QEMU guest agent
+  ansible.builtin.shell: |
+    virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-network-get-interfaces"}' | \
+    python3 -c "import sys, json; ifaces = json.load(sys.stdin)['return']; \
+    ip = next((addr['ip-address'] for iface in ifaces if iface.get('name') not in ['lo'] \
+    for addr in iface.get('ip-addresses', []) if addr.get('ip-address-type') == 'ipv4'), None); \
+    print(ip if ip else '')"
+  register: vm_ip_guest_agent
+  when: guest_agent_ready is succeeded
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  retries: 10
+  delay: 5
+  until: vm_ip_guest_agent.stdout is defined and vm_ip_guest_agent.stdout | length > 0
+  ignore_errors: true
+  changed_when: false
+
+- name: Set IP retrieved flag if successful
+  ansible.builtin.set_fact:
+    ip_retrieved: true
+  when: vm_ip_guest_agent is defined and vm_ip_guest_agent.stdout is defined and vm_ip_guest_agent.stdout | length > 0
+
+- name: Fallback to domifaddr
+  ansible.builtin.shell: |
+    virsh domifaddr {{ vm_name }} | grep -oP '(\d+\.){3}\d+' | head -1
+  register: vm_ip_domifaddr
+  until: vm_ip_domifaddr.stdout | length > 0
+  retries: 20
+  delay: 10
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  when: vm_ip | length == 0 and (ip_retrieved is not defined or not ip_retrieved)
+  changed_when: false
+
+- name: Fallback to ip neighbour lookup by MAC address
+  ansible.builtin.shell: |
+    ip neigh | grep -i "{{ vm_mac_result.stdout }}" | grep -oP '(\d+\.){3}\d+' | head -1
+  register: vm_ip_neighbour
+  until: vm_ip_neighbour.stdout | length > 0
+  retries: 20
+  delay: 10
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  when: vm_ip | length == 0 and (ip_retrieved is not defined or not ip_retrieved) and vm_mac_result.stdout is defined and vm_mac_result.stdout | length > 0
+  ignore_errors: true
+
+- name: Set VM IP fact
+  ansible.builtin.set_fact:
+    detected_vm_ip: >-
+      {{ vm_ip if vm_ip | length > 0
+         else (vm_ip_guest_agent.stdout if (vm_ip_guest_agent.stdout is defined and vm_ip_guest_agent.stdout | length > 0)
+         else (vm_ip_domifaddr.stdout if (vm_ip_domifaddr.stdout is defined and vm_ip_domifaddr.stdout | length > 0)
+         else (vm_ip_neighbour.stdout if (vm_ip_neighbour.stdout is defined and vm_ip_neighbour.stdout | length > 0)
+         else ''))) }}
+
+- name: Display VM IP address
+  ansible.builtin.debug:
+    msg: "VM {{ vm_name }} IP: {{ detected_vm_ip }}"
+
+- name: Wait for SSH to become available
+  ansible.builtin.wait_for:
+    host: "{{ detected_vm_ip }}"
+    port: 22
+    delay: 10
+    timeout: 300
+  delegate_to: "{{ kvm_host }}"
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}/{{ vm_name }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+
+- name: Save VM information to artifacts
+  ansible.builtin.copy:
+    content: |
+      VM Name: {{ vm_name }}
+      IP Address: {{ detected_vm_ip }}
+      Memory: {{ vm_memory }}MB
+      CPUs: {{ vm_cpus }}
+      OS Disk: {{ vm_disk_size }}GB
+      Created: {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
+    dest: "{{ artifacts_dir }}/{{ vm_name }}/vm-info.txt"
+    mode: '0644'
+  delegate_to: localhost

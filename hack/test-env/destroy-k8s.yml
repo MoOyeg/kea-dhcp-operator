@@ -1,0 +1,120 @@
+---
+# Destroy the Kubernetes VM and clean up all resources
+
+- name: Single-Node Kubernetes on KVM - Destroy VM
+  hosts: k8s_vms
+  gather_facts: false
+
+  vars:
+    _force_destroy: "{{ force_destroy | default(false) }}"
+
+  tasks:
+    - name: Confirm destruction (if not forced)
+      ansible.builtin.pause:
+        prompt: |
+          WARNING: This will destroy the VM '{{ vm_name }}' and all its data!
+          The KinD cluster inside will be permanently deleted.
+          This action cannot be undone.
+
+          Type 'yes' to continue
+      register: confirm_destroy
+      when: not _force_destroy | bool
+
+    - name: Check confirmation
+      ansible.builtin.fail:
+        msg: "Destruction cancelled by user"
+      when:
+        - not _force_destroy | bool
+        - confirm_destroy.user_input | lower != 'yes'
+
+    - name: Display destruction information
+      ansible.builtin.debug:
+        msg:
+          - "Destroying Kubernetes VM: {{ vm_name }}"
+          - "Target KVM Host: {{ kvm_host }}"
+
+    - name: Check if VM exists
+      ansible.builtin.shell: |
+        virsh list --all | grep -w "{{ vm_name }}" || true
+      register: vm_check
+      delegate_to: "{{ kvm_host }}"
+      become: true
+      changed_when: false
+
+    - name: Destroy VM
+      when: vm_check.stdout | length > 0
+      block:
+        - name: Shutdown VM if running
+          ansible.builtin.shell: |
+            if virsh list --state-running | grep -qw "{{ vm_name }}"; then
+              virsh shutdown "{{ vm_name }}"
+              sleep 5
+              # Force destroy if still running
+              if virsh list --state-running | grep -qw "{{ vm_name }}"; then
+                virsh destroy "{{ vm_name }}"
+              fi
+            fi
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          register: vm_shutdown
+          changed_when: vm_shutdown.rc == 0
+
+        - name: Undefine VM and delete disks
+          ansible.builtin.shell: |
+            virsh undefine "{{ vm_name }}" --remove-all-storage || virsh undefine "{{ vm_name }}"
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          register: vm_undefine
+          changed_when: vm_undefine.rc == 0
+
+        - name: Get storage pool path for cleanup
+          ansible.builtin.shell: |
+            POOL="{{ vm_storage_pool | default('default') }}"
+            if [ -z "$POOL" ]; then POOL="default"; fi
+            virsh pool-dumpxml "$POOL" 2>/dev/null | grep -oP '(?<=<path>)[^<]+' || echo "/var/lib/libvirt/images"
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          register: storage_pool_path
+          changed_when: false
+
+        - name: Clean up remaining VM files
+          ansible.builtin.shell: |
+            POOL_PATH="{{ storage_pool_path.stdout | trim }}"
+            # Remove VM directory (contains base.qcow2, cloud-init.iso, etc.)
+            rm -rf "$POOL_PATH/{{ vm_name }}" 2>/dev/null || true
+            # Also remove any top-level files matching VM name
+            rm -f "$POOL_PATH/{{ vm_name }}"*.qcow2 2>/dev/null || true
+            rm -f "$POOL_PATH/{{ vm_name }}"*.iso 2>/dev/null || true
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          changed_when: true
+          failed_when: false
+
+    # Refresh storage pool so libvirt knows the volumes are gone
+    - name: Refresh storage pool
+      ansible.builtin.shell: |
+        POOL="{{ vm_storage_pool | default('default') }}"
+        if [ -z "$POOL" ]; then POOL="default"; fi
+        virsh pool-refresh "$POOL" 2>/dev/null || true
+      delegate_to: "{{ kvm_host }}"
+      become: true
+      changed_when: false
+      failed_when: false
+
+    - name: Clean up local artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}/{{ vm_name }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+
+    - name: VM destruction summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - "VM Destruction Complete!"
+          - "================================================"
+          - "VM Name: {{ vm_name }}"
+          - "Status: {{ 'Destroyed' if vm_check.stdout | length > 0 else 'Did not exist' }}"
+          - "Artifacts removed: artifacts/{{ vm_name }}/"
+          - "================================================"

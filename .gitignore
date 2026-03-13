@@ -1,0 +1,44 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/*
+Dockerfile.cross
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# Kubernetes Generated files - skip generated files, except for vendored files
+!vendor/**/zz_generated.*
+
+# editor and IDE paraphernalia
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Sensitive / environment-specific files
+hack/test-env/ssh-key
+hack/test-env/ssh-key.pub
+hack/test-env/artifacts/
+hack/personal.sh
+.claude/settings.local.json
+
+# Node modules and build artifacts (console plugin)
+console-plugin/node_modules/
+console-plugin/dist/
+
+# Stale bundle directories
+bundle-*/
+
+# Cloned repos inside the project
+community-operators/

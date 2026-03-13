@@ -1,0 +1,50 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaDhcp6Server
+metadata:
+  name: dhcp6-example
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # --- Global timers ---
+  preferred-lifetime: 3000
+  valid-lifetime: 4000
+
+  # --- Interface configuration ---
+  # Use "net1" when attaching via a NetworkAttachmentDefinition (NAD).
+  interfaces-config:
+    interfaces:
+      - net1
+
+  # --- Pod placement with NAD ---
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp6-net"
+
+  # --- Lease persistence ---
+  lease-database:
+    type: memfile
+    persist: true
+
+  # --- Global DHCP options ---
+  option-data:
+    - name: dns-recursive-name-server
+      data: "2001:db8:1::dead:beef"
+
+  # --- Subnets ---
+  subnet6:
+    - id: 1
+      subnet: "2001:db8:1::/64"
+      pools:
+        - pool: "2001:db8:1::100 - 2001:db8:1::1ff"
+      pd-pools:
+        - prefix: "2001:db8:8::"
+          prefix-len: 48
+          delegated-len: 64
+
+  # --- Logging ---
+  loggers:
+    - name: kea-dhcp6
+      severity: INFO
+      output-options:
+        - output: stdout

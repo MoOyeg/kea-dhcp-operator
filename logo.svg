@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a237e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d47a1;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#42a5f5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e88e5;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#64b5f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#42a5f5;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="8" y="8" width="240" height="240" rx="40" ry="40" fill="url(#bg)" />
+
+  <!-- Central hub circle -->
+  <circle cx="128" cy="110" r="32" fill="url(#accent)" opacity="0.95" />
+
+  <!-- Inner hub detail -->
+  <circle cx="128" cy="110" r="18" fill="none" stroke="#fff" stroke-width="2.5" opacity="0.9" />
+  <circle cx="128" cy="110" r="6" fill="#fff" opacity="0.95" />
+
+  <!-- Radiating connection lines -->
+  <!-- Top -->
+  <line x1="128" y1="78" x2="128" y2="48" stroke="url(#glow)" stroke-width="3" stroke-linecap="round" />
+  <!-- Top-left -->
+  <line x1="105" y1="88" x2="72" y2="58" stroke="url(#glow)" stroke-width="3" stroke-linecap="round" />
+  <!-- Top-right -->
+  <line x1="151" y1="88" x2="184" y2="58" stroke="url(#glow)" stroke-width="3" stroke-linecap="round" />
+  <!-- Left -->
+  <line x1="96" y1="110" x2="56" y2="110" stroke="url(#glow)" stroke-width="3" stroke-linecap="round" />
+  <!-- Right -->
+  <line x1="160" y1="110" x2="200" y2="110" stroke="url(#glow)" stroke-width="3" stroke-linecap="round" />
+
+  <!-- Endpoint nodes -->
+  <circle cx="128" cy="44" r="8" fill="url(#glow)" />
+  <circle cx="68" cy="54" r="8" fill="url(#glow)" />
+  <circle cx="188" cy="54" r="8" fill="url(#glow)" />
+  <circle cx="52" cy="110" r="8" fill="url(#glow)" />
+  <circle cx="204" cy="110" r="8" fill="url(#glow)" />
+
+  <!-- Small dots inside endpoint nodes -->
+  <circle cx="128" cy="44" r="3" fill="#fff" opacity="0.9" />
+  <circle cx="68" cy="54" r="3" fill="#fff" opacity="0.9" />
+  <circle cx="188" cy="54" r="3" fill="#fff" opacity="0.9" />
+  <circle cx="52" cy="110" r="3" fill="#fff" opacity="0.9" />
+  <circle cx="204" cy="110" r="3" fill="#fff" opacity="0.9" />
+
+  <!-- Downward arrows representing IP assignment (DHCP concept) -->
+  <!-- Arrow 1 -->
+  <line x1="88" y1="148" x2="88" y2="182" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" />
+  <polyline points="80,174 88,184 96,174" fill="none" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Arrow 2 -->
+  <line x1="128" y1="148" x2="128" y2="182" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" />
+  <polyline points="120,174 128,184 136,174" fill="none" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Arrow 3 -->
+  <line x1="168" y1="148" x2="168" y2="182" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" />
+  <polyline points="160,174 168,184 176,174" fill="none" stroke="#64b5f6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- DHCP text -->
+  <text x="128" y="214" text-anchor="middle" font-family="monospace, 'Courier New'" font-size="28" font-weight="bold" fill="#ffffff" letter-spacing="4">DHCP</text>
+</svg>

@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.plugin.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.plugin.name }}
+    app.kubernetes.io/name: {{ .Values.plugin.name }}
+    app.kubernetes.io/part-of: kea-dhcp
+    app.kubernetes.io/managed-by: helm
+spec:
+  replicas: {{ .Values.plugin.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.plugin.name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.plugin.name }}
+    spec:
+      serviceAccountName: {{ .Values.plugin.name }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: {{ .Values.plugin.image }}
+          ports:
+            - containerPort: 9443
+              name: https
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.plugin.resources.nginx | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: plugin-serving-cert
+              mountPath: /var/serving-cert
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9443
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+        - name: backend
+          image: {{ .Values.plugin.image }}
+          command: ["/usr/local/bin/backend"]
+          ports:
+            - containerPort: 9444
+              name: backend
+              protocol: TCP
+          env:
+            - name: BACKEND_PORT
+              value: "9444"
+          resources:
+            {{- toYaml .Values.plugin.resources.backend | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: plugin-serving-cert
+              mountPath: /var/serving-cert
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9444
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9444
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ .Values.plugin.name }}-nginx
+        - name: plugin-serving-cert
+          secret:
+            secretName: {{ .Values.plugin.name }}-cert

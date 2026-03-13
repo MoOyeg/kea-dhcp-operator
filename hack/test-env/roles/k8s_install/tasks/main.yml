@@ -1,0 +1,285 @@
+---
+# Role: k8s_install
+# SSHes into the VM and installs Podman, KinD, kubectl, then creates a cluster
+
+- name: Wait for cloud-init to complete
+  ansible.builtin.shell: |
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=10 -o BatchMode=yes \
+        -i /workspace/ssh-key {{ vm_user }}@{{ detected_vm_ip }} \
+        'cloud-init status' 2>&1 || echo "waiting"
+  register: cloudinit_wait
+  until: cloudinit_wait.stdout is defined and ('done' in cloudinit_wait.stdout or 'disabled' in cloudinit_wait.stdout)
+  retries: "{{ wait_cloud_init_retries | default(30) }}"
+  delay: "{{ wait_cloud_init_delay | default(5) }}"
+  delegate_to: localhost
+  changed_when: false
+  failed_when: false
+
+# Re-detect IP after cloud-init completes (network may have been reconfigured)
+- name: Re-detect VM IP after cloud-init
+  ansible.builtin.shell: |
+    virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-network-get-interfaces"}' | \
+    python3 -c "import sys, json; ifaces = json.load(sys.stdin)['return']; \
+    ip = next((addr['ip-address'] for iface in ifaces if iface.get('name') not in ['lo'] \
+    for addr in iface.get('ip-addresses', []) if addr.get('ip-address-type') == 'ipv4'), None); \
+    print(ip if ip else '')"
+  register: post_cloudinit_ip
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  retries: 5
+  delay: 5
+  until: post_cloudinit_ip.stdout is defined and post_cloudinit_ip.stdout | length > 0
+  changed_when: false
+
+- name: Update detected_vm_ip if IP changed after cloud-init
+  ansible.builtin.set_fact:
+    detected_vm_ip: "{{ post_cloudinit_ip.stdout | trim }}"
+  when: post_cloudinit_ip.stdout is defined and post_cloudinit_ip.stdout | trim | length > 0
+
+- name: Display final VM IP (post cloud-init)
+  ansible.builtin.debug:
+    msg: "VM IP after cloud-init: {{ detected_vm_ip }}"
+
+- name: Add VM to in-memory inventory
+  ansible.builtin.add_host:
+    name: "{{ detected_vm_ip }}"
+    groups: k8s_nodes
+    ansible_user: "{{ vm_user }}"
+    ansible_ssh_pass: "{{ vm_password }}"
+    ansible_password: "{{ vm_password }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_password: "{{ vm_password }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+  no_log: true
+
+- name: Wait for system to be ready
+  ansible.builtin.wait_for:
+    timeout: 30
+  delegate_to: localhost
+
+- name: Install and configure Kubernetes on VM
+  delegate_to: "{{ detected_vm_ip }}"
+  become: true
+  vars:
+    ansible_user: "{{ vm_user }}"
+    ansible_password: "{{ vm_password }}"
+    ansible_become_password: "{{ vm_password }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+  block:
+    - name: Gather facts from VM
+      ansible.builtin.setup:
+
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - python3-pip
+          - podman
+          - curl
+          - tar
+          - iptables
+        state: present
+      register: install_packages
+      retries: "{{ package_install_retries }}"
+      delay: "{{ package_install_delay }}"
+      until: install_packages is succeeded
+
+    - name: Ensure podman is running
+      ansible.builtin.systemd:
+        name: podman
+        state: started
+        enabled: true
+      failed_when: false
+
+    - name: Disable firewalld (if present)
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Set SELinux to permissive
+      ansible.builtin.shell: |
+        if command -v setenforce >/dev/null 2>&1; then
+          setenforce 0 || true
+          sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config || true
+        fi
+      failed_when: false
+      changed_when: false
+
+    - name: Check if kind is already installed with correct version
+      ansible.builtin.shell: |
+        /usr/local/bin/kind version 2>/dev/null | grep -oP 'v[\d.]+' || echo "none"
+      register: kind_current
+      changed_when: false
+
+    - name: Download KinD binary
+      ansible.builtin.get_url:
+        url: "https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-linux-{{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}"
+        dest: /usr/local/bin/kind
+        mode: '0755'
+        timeout: "{{ download_timeout }}"
+      retries: "{{ download_retries }}"
+      delay: "{{ download_delay }}"
+      when: kind_current.stdout != kind_version
+
+    - name: Verify kind is executable
+      ansible.builtin.command: /usr/local/bin/kind version
+      register: kind_version_output
+      changed_when: false
+
+    - name: Display KinD version
+      ansible.builtin.debug:
+        msg: "{{ kind_version_output.stdout }}"
+
+    - name: Check if kubectl is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/kubectl
+      register: kubectl_installed
+
+    - name: Download kubectl binary
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ k8s_version }}/bin/linux/{{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        timeout: "{{ download_timeout }}"
+      retries: "{{ download_retries }}"
+      delay: "{{ download_delay }}"
+      when: not kubectl_installed.stat.exists
+
+    - name: Verify kubectl is executable
+      ansible.builtin.command: /usr/local/bin/kubectl version --client
+      register: kubectl_version_output
+      changed_when: false
+
+    - name: Display kubectl version
+      ansible.builtin.debug:
+        msg: "{{ kubectl_version_output.stdout }}"
+
+    - name: Check if cluster already exists
+      ansible.builtin.shell: |
+        /usr/local/bin/kind get clusters 2>/dev/null | grep -w "{{ cluster_name }}" || true
+      register: cluster_exists
+      changed_when: false
+      environment:
+        KIND_EXPERIMENTAL_PROVIDER: "{{ container_runtime }}"
+
+    - name: Create KinD cluster
+      when: cluster_exists.stdout | length == 0
+      block:
+        - name: Create KinD config directory
+          ansible.builtin.file:
+            path: /tmp/kind
+            state: directory
+            mode: '0755'
+
+        - name: Generate KinD cluster configuration
+          ansible.builtin.template:
+            src: kind-config.yaml.j2
+            dest: /tmp/kind/kind-config.yaml
+            mode: '0644'
+
+        - name: Create KinD cluster
+          ansible.builtin.command:
+            cmd: >
+              /usr/local/bin/kind create cluster
+              --name {{ cluster_name }}
+              --config /tmp/kind/kind-config.yaml
+              --image {{ kind_image }}
+              --wait 5m
+          environment:
+            KIND_EXPERIMENTAL_PROVIDER: "{{ container_runtime }}"
+          register: kind_create
+          timeout: 600
+          changed_when: kind_create.rc == 0
+
+        - name: Display cluster creation output
+          ansible.builtin.debug:
+            var: kind_create.stderr_lines
+          when: kind_create.changed
+
+    - name: Wait for node to be ready
+      ansible.builtin.shell: |
+        /usr/local/bin/kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ' || echo "0"
+      register: nodes_ready
+      retries: "{{ node_ready_retries }}"
+      delay: "{{ node_ready_delay }}"
+      until: nodes_ready.stdout | int >= 1
+      changed_when: false
+
+    - name: Wait for core system pods to be ready
+      ansible.builtin.shell: |
+        /usr/local/bin/kubectl get pods -n kube-system --no-headers 2>/dev/null | grep -v 'Running\|Completed' | wc -l
+      register: pending_pods
+      retries: "{{ k8s_ready_retries }}"
+      delay: "{{ k8s_ready_delay }}"
+      until: pending_pods.stdout | int == 0
+      changed_when: false
+
+    - name: Get node status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/kubectl get nodes -o wide
+      register: node_status
+      changed_when: false
+
+    - name: Display node status
+      ansible.builtin.debug:
+        msg: "{{ node_status.stdout_lines }}"
+
+    - name: Export kubeconfig from VM
+      ansible.builtin.shell: |
+        /usr/local/bin/kind get kubeconfig --name {{ cluster_name }}
+      register: vm_kubeconfig
+      environment:
+        KIND_EXPERIMENTAL_PROVIDER: "{{ container_runtime }}"
+      changed_when: false
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}/{{ vm_name }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+
+- name: Save kubeconfig to local artifacts
+  ansible.builtin.copy:
+    content: "{{ vm_kubeconfig.stdout }}"
+    dest: "{{ kubeconfig_path }}"
+    mode: '0600'
+  delegate_to: localhost
+
+- name: Patch kubeconfig to use VM IP instead of localhost
+  ansible.builtin.replace:
+    path: "{{ kubeconfig_path }}"
+    regexp: 'https://(127\.0\.0\.1|0\.0\.0\.0):(\d+)'
+    replace: 'https://{{ detected_vm_ip }}:\2'
+  delegate_to: localhost
+
+- name: Save cluster information
+  ansible.builtin.copy:
+    content: |
+      Kubernetes Cluster Information
+      ==============================
+      Cluster Name: {{ cluster_name }}
+      Kubernetes Version: {{ k8s_version }}
+      Container Runtime: {{ container_runtime }}
+      KinD Version: {{ kind_version }}
+      VM Name: {{ vm_name }}
+      VM IP: {{ detected_vm_ip }}
+
+      Kubeconfig: {{ kubeconfig_path }}
+
+      Usage:
+        export KUBECONFIG={{ kubeconfig_path }}
+        kubectl get nodes
+        kubectl get pods -A
+
+      SSH Access:
+        ssh {{ vm_user }}@{{ detected_vm_ip }}
+
+      Installation completed: {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
+    dest: "{{ artifacts_dir }}/{{ vm_name }}/cluster-info.txt"
+    mode: '0644'
+  delegate_to: localhost

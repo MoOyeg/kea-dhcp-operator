@@ -1,0 +1,24 @@
+plugin:
+  name: kea-dhcp-console-plugin
+  displayName: "Kea DHCP"
+  description: "Manage Kea DHCP servers and view leases"
+  image: quay.io/mooyeg/kea-dhcp-console-plugin:latest
+  replicas: 1
+  port: 9443
+  backendPort: 9444
+
+  resources:
+    nginx:
+      requests:
+        cpu: 10m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    backend:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi

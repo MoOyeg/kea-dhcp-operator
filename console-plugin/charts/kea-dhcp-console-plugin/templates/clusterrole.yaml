@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.plugin.name }}
+  labels:
+    app: {{ .Values.plugin.name }}
+rules:
+  - apiGroups: ["kea.openshift.io"]
+    resources: ["keacontrolagents"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]

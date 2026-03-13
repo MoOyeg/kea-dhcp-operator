@@ -1,0 +1,89 @@
+---
+# Role: k8s_prerequisites
+# Validates prerequisites on the KVM host for VM creation
+
+- name: Check if libvirt is running on KVM host
+  ansible.builtin.command: virsh list --all
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  register: libvirt_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if libvirt is not available
+  ansible.builtin.fail:
+    msg: |
+      libvirt is required but not available on {{ kvm_host }}.
+      Install libvirt:
+        sudo dnf install -y libvirt libvirt-daemon-kvm qemu-kvm virt-install
+        sudo systemctl enable --now libvirtd
+  when: libvirt_check.rc != 0
+
+- name: Check if genisoimage is installed on KVM host
+  ansible.builtin.command: which genisoimage
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  register: genisoimage_check
+  changed_when: false
+  failed_when: false
+
+- name: Install genisoimage if missing
+  ansible.builtin.dnf:
+    name: genisoimage
+    state: present
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  when: genisoimage_check.rc != 0
+  retries: "{{ package_install_retries }}"
+  delay: "{{ package_install_delay }}"
+
+- name: Check if qemu-img is installed on KVM host
+  ansible.builtin.command: which qemu-img
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  register: qemuimg_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if qemu-img is not available
+  ansible.builtin.fail:
+    msg: |
+      qemu-img is required but not available on {{ kvm_host }}.
+      Install: sudo dnf install -y qemu-img
+  when: qemuimg_check.rc != 0
+
+- name: Check if VM already exists
+  ansible.builtin.shell: |
+    virsh list --all | grep -w "{{ vm_name }}" || true
+  register: existing_vm_check
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  changed_when: false
+
+- name: Set VM exists fact
+  ansible.builtin.set_fact:
+    vm_exists: "{{ existing_vm_check.stdout | length > 0 }}"
+
+- name: Display VM existence status
+  ansible.builtin.debug:
+    msg: "VM '{{ vm_name }}' {{ 'already exists - will reuse' if vm_exists else 'does not exist - will be created' }}"
+
+- name: Check available disk space on KVM host
+  ansible.builtin.shell: |
+    df -BG /var/lib/libvirt 2>/dev/null | tail -1 | awk '{print $4}' | sed 's/G//' || echo "999"
+  register: available_space
+  delegate_to: "{{ kvm_host }}"
+  become: true
+  changed_when: false
+
+- name: Warn if disk space is low
+  ansible.builtin.debug:
+    msg: "WARNING: Low disk space on KVM host ({{ available_space.stdout }}GB). VM needs ~{{ vm_disk_size }}GB."
+  when: available_space.stdout | int < (vm_disk_size | int + 10)
+
+- name: Prerequisites validation complete
+  ansible.builtin.debug:
+    msg:
+      - "All prerequisites validated on KVM host {{ kvm_host }}"
+      - "VM exists: {{ vm_exists }}"
+      - "Available disk space: {{ available_space.stdout }}GB"

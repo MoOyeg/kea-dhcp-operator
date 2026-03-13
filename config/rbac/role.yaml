@@ -1,0 +1,149 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - serviceaccounts
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - create
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kea.openshift.io
+  resources:
+  - keacontrolagents
+  - keadhcp4servers
+  - keadhcp6servers
+  - keadhcpddns
+  - keaservers
+  - keastorkservers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kea.openshift.io
+  resources:
+  - keacontrolagents/finalizers
+  - keadhcp4servers/finalizers
+  - keadhcp6servers/finalizers
+  - keadhcpddns/finalizers
+  - keaservers/finalizers
+  - keastorkservers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - kea.openshift.io
+  resources:
+  - keacontrolagents/status
+  - keadhcp4servers/status
+  - keadhcp6servers/status
+  - keadhcpddns/status
+  - keaservers/status
+  - keastorkservers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - podmonitors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
+  - security.openshift.io
+  resourceNames:
+  - kea-dhcp
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - use

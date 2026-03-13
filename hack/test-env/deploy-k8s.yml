@@ -1,0 +1,114 @@
+---
+# Deploy a Single-Node Kubernetes Cluster on a KVM VM
+# This playbook creates a VM on a KVM host and installs K8s using KinD + Podman
+
+- name: Single-Node Kubernetes on KVM - Deployment
+  hosts: k8s_vms
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "Deploying Single-Node Kubernetes VM"
+          - "VM Name: {{ vm_name }}"
+          - "Target KVM Host: {{ kvm_host }}"
+          - "Memory: {{ vm_memory }}MB"
+          - "CPUs: {{ vm_cpus }}"
+          - "OS Disk: {{ vm_disk_size }}GB"
+          - "Kubernetes Version: {{ k8s_version }}"
+          - "KinD Version: {{ kind_version }}"
+
+    - name: Validate prerequisites
+      ansible.builtin.include_role:
+        name: k8s_prerequisites
+
+    - name: Create VM on KVM host
+      ansible.builtin.include_role:
+        name: vm_create
+      when: not vm_exists | default(false)
+
+    - name: Get IP address for existing VM
+      block:
+        - name: Wait for QEMU guest agent to be ready on existing VM
+          ansible.builtin.shell: |
+            virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-ping"}' 2>/dev/null
+          register: guest_agent_ready_existing
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          retries: 10
+          delay: 5
+          until: guest_agent_ready_existing.rc == 0
+          ignore_errors: true
+          changed_when: false
+
+        - name: Get IP address from QEMU guest agent for existing VM
+          ansible.builtin.shell: |
+            virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-network-get-interfaces"}' | \
+            python3 -c "import sys, json; ifaces = json.load(sys.stdin)['return']; \
+            ip = next((addr['ip-address'] for iface in ifaces if iface.get('name') not in ['lo'] \
+            for addr in iface.get('ip-addresses', []) if addr.get('ip-address-type') == 'ipv4'), None); \
+            print(ip if ip else '')"
+          register: vm_ip_guest_agent_existing
+          when: guest_agent_ready_existing is succeeded
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          retries: 5
+          delay: 5
+          until: vm_ip_guest_agent_existing.stdout is defined and vm_ip_guest_agent_existing.stdout | length > 0
+          ignore_errors: true
+          changed_when: false
+
+        - name: Fallback to domifaddr for existing VM
+          ansible.builtin.shell: |
+            virsh domifaddr {{ vm_name }} | grep -oP '(\d+\.){3}\d+' | head -1
+          register: vm_ip_domifaddr_existing
+          until: vm_ip_domifaddr_existing.stdout | length > 0
+          retries: 5
+          delay: 5
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          when: vm_ip_guest_agent_existing is not defined or vm_ip_guest_agent_existing.stdout is not defined or vm_ip_guest_agent_existing.stdout | length == 0
+          ignore_errors: true
+          changed_when: false
+
+        - name: Set VM IP fact for existing VM
+          ansible.builtin.set_fact:
+            detected_vm_ip: >-
+              {{ vm_ip_guest_agent_existing.stdout if (vm_ip_guest_agent_existing.stdout is defined and vm_ip_guest_agent_existing.stdout | length > 0)
+                 else (vm_ip_domifaddr_existing.stdout if (vm_ip_domifaddr_existing.stdout is defined and vm_ip_domifaddr_existing.stdout | length > 0)
+                 else '') }}
+      when: vm_exists | default(false)
+
+    - name: Install Kubernetes on VM
+      ansible.builtin.include_role:
+        name: k8s_install
+
+    - name: Configure cluster for Kea operator testing
+      ansible.builtin.include_role:
+        name: k8s_configure
+
+    - name: Final deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - "Kubernetes Deployment Complete!"
+          - "================================================"
+          - "VM Name: {{ vm_name }}"
+          - "VM IP: {{ detected_vm_ip }}"
+          - "Kubernetes Version: {{ k8s_version }}"
+          - "Cluster Name: {{ cluster_name }}"
+          - ""
+          - "Kubeconfig: {{ kubeconfig_path }}"
+          - "  export KUBECONFIG={{ kubeconfig_path }}"
+          - ""
+          - "SSH Access: ssh {{ vm_user }}@{{ detected_vm_ip }}"
+          - ""
+          - "Verify:"
+          - "  kubectl get nodes"
+          - "  kubectl get pods -A"
+          - "  kubectl get crds | grep kea"
+          - ""
+          - "Credentials saved to:"
+          - "  {{ artifacts_dir }}/{{ vm_name }}/"
+          - "================================================"

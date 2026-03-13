@@ -1,0 +1,90 @@
+<domain type='kvm'>
+  <name>{{ vm_name }}</name>
+  <memory unit='MiB'>{{ vm_memory }}</memory>
+  <vcpu placement='static'>{{ vm_cpus }}</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough'>
+    <topology sockets='1' cores='{{ vm_cpus }}' threads='1'/>
+  </cpu>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+
+    <!-- Main OS disk -->
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='{{ vm_storage_path }}/{{ vm_name }}/{{ vm_name }}.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+
+    <!-- Cloud-init ISO -->
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='{{ vm_storage_path }}/{{ vm_name }}/cloud-init.iso'/>
+      <target dev='hda' bus='ide'/>
+      <readonly/>
+    </disk>
+
+    <!-- Network interface -->
+    {% if vm_network_type == 'bridge' and vm_bridge_name | length > 0 %}
+    <interface type='bridge'>
+      <source bridge='{{ vm_bridge_name }}'/>
+      {% if vm_mac_address | length > 0 %}
+      <mac address='{{ vm_mac_address }}'/>
+      {% endif %}
+      <model type='{{ vm_nic_model | default("virtio") }}'/>
+    </interface>
+    {% elif vm_network_type == 'direct' and vm_direct_interface | length > 0 %}
+    <interface type='direct'>
+      <source dev='{{ vm_direct_interface }}' mode='{{ vm_direct_mode | default("vepa") }}'/>
+      {% if vm_mac_address | length > 0 %}
+      <mac address='{{ vm_mac_address }}'/>
+      {% endif %}
+      <model type='{{ vm_nic_model | default("virtio") }}'/>
+    </interface>
+    {% else %}
+    <interface type='network'>
+      <source network='{{ vm_network }}'/>
+      {% if vm_mac_address | length > 0 %}
+      <mac address='{{ vm_mac_address }}'/>
+      {% endif %}
+      <model type='{{ vm_nic_model | default("virtio") }}'/>
+    </interface>
+    {% endif %}
+
+    <!-- QEMU Guest Agent -->
+    <channel type='unix'>
+      <source mode='bind'/>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+
+    <!-- Console -->
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+
+    <!-- Graphics -->
+    <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'>
+      <listen type='address' address='0.0.0.0'/>
+    </graphics>
+
+    <!-- Video -->
+    <video>
+      <model type='cirrus'/>
+    </video>
+  </devices>
+</domain>

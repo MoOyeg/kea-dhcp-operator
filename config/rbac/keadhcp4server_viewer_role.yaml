@@ -1,0 +1,23 @@
+# permissions for end users to view keadhcp4servers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+  name: keadhcp4server-viewer-role
+rules:
+- apiGroups:
+  - kea.openshift.io
+  resources:
+  - keadhcp4servers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kea.openshift.io
+  resources:
+  - keadhcp4servers/status
+  verbs:
+  - get

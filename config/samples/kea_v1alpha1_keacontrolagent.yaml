@@ -1,0 +1,26 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaControlAgent
+metadata:
+  name: ca-example
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  http-host: "0.0.0.0"
+  http-port: 8000
+
+  # --- Control sockets to managed daemons ---
+  control-sockets:
+    dhcp4:
+      socket-type: unix
+      socket-name: /run/kea/kea-dhcp4-ctrl.sock
+    dhcp6:
+      socket-type: unix
+      socket-name: /run/kea/kea-dhcp6-ctrl.sock
+
+  # --- Logging ---
+  loggers:
+    - name: kea-ctrl-agent
+      severity: INFO
+      output-options:
+        - output: stdout

@@ -1,0 +1,63 @@
+#cloud-config
+hostname: {{ vm_name }}
+fqdn: {{ vm_name }}.local
+manage_etc_hosts: true
+
+# Allow SSH password authentication
+ssh_pwauth: true
+disable_root: false
+chpasswd:
+  expire: false
+
+users:
+  - name: {{ vm_user }}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo, wheel
+    shell: /bin/bash
+    lock_passwd: false
+    passwd: {{ vm_password | password_hash('sha512') }}
+{% if ssh_authorized_keys | select | list | length > 0 %}
+    ssh_authorized_keys:
+{% for key in ssh_authorized_keys %}
+{% if key | length > 0 %}
+      - {{ key }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+# Resize root partition to use full disk
+growpart:
+  mode: auto
+  devices: ['/']
+
+resize_rootfs: true
+
+# Minimal package installation - heavy packages installed by Ansible
+package_update: false
+package_upgrade: false
+
+packages:
+  - qemu-guest-agent
+
+# Enable SSH and guest agent
+runcmd:
+  - systemctl enable --now qemu-guest-agent || systemctl enable --now qemu-ga || true
+  - sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - systemctl restart sshd || systemctl restart ssh || true
+  # Copy SSH keys to root for Ansible access
+  - mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  - cp /home/{{ vm_user }}/.ssh/authorized_keys /root/.ssh/authorized_keys || true
+  - chmod 600 /root/.ssh/authorized_keys
+  - chown root:root /root/.ssh/authorized_keys
+
+# Ensure SELinux is set to permissive
+bootcmd:
+  - setenforce 0 || true
+  - sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config || true
+
+# Don't let cloud-init manage network after first boot
+network:
+  config: disabled

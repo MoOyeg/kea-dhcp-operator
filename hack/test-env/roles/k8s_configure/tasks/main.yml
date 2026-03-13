@@ -1,0 +1,72 @@
+---
+# Role: k8s_configure
+# Configures the K8s cluster for Kea DHCP operator testing
+# Runs against the VM via SSH
+
+- name: Configure cluster on VM
+  delegate_to: "{{ detected_vm_ip }}"
+  become: true
+  vars:
+    ansible_user: "{{ vm_user }}"
+    ansible_password: "{{ vm_password }}"
+    ansible_become_password: "{{ vm_password }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+  block:
+    - name: Create kea-system namespace
+      ansible.builtin.command:
+        cmd: /usr/local/bin/kubectl create namespace kea-system
+      register: ns_create
+      changed_when: ns_create.rc == 0
+      failed_when: ns_create.rc != 0 and 'already exists' not in ns_create.stderr
+
+    - name: Create kea-dhcp-operator namespace
+      ansible.builtin.command:
+        cmd: /usr/local/bin/kubectl create namespace kea-dhcp-operator
+      register: ns_operator_create
+      changed_when: ns_operator_create.rc == 0
+      failed_when: ns_operator_create.rc != 0 and 'already exists' not in ns_operator_create.stderr
+
+    - name: Find CRD bases directory
+      ansible.builtin.set_fact:
+        crd_bases_dir: "{{ lookup('ansible.builtin.first_found', ['/repo/config/crd/bases/', playbook_dir + '/../../config/crd/bases/']) }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Copy CRD manifests to VM
+      ansible.builtin.copy:
+        src: "{{ crd_bases_dir }}"
+        dest: /tmp/kea-crds/
+        mode: '0644'
+
+    - name: Install CRDs
+      ansible.builtin.shell: |
+        /usr/local/bin/kubectl apply --server-side --force-conflicts -R -f /tmp/kea-crds/
+      register: crd_install
+      changed_when: crd_install.rc == 0
+
+    - name: Verify CRDs are installed
+      ansible.builtin.command:
+        cmd: /usr/local/bin/kubectl get crds -o name
+      register: crd_list
+      changed_when: false
+
+    - name: Display installed CRDs
+      ansible.builtin.debug:
+        msg: "{{ crd_list.stdout_lines }}"
+
+    - name: Get all pods status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/kubectl get pods -A -o wide
+      register: all_pods
+      changed_when: false
+
+    - name: Display all pods
+      ansible.builtin.debug:
+        msg: "{{ all_pods.stdout_lines }}"
+
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "Cluster configured for Kea DHCP operator testing"
+          - "Namespaces: kea-system, kea-dhcp-operator"
+          - "CRDs installed: {{ crd_list.stdout_lines | length }}"

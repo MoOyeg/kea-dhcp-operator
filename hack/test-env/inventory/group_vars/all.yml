@@ -1,0 +1,107 @@
+---
+# Global configuration for Single-Node Kubernetes KVM Test Environment
+
+# KVM Host Configuration
+kvm_host: "{{ groups['kvm_hosts'][0] }}"
+kvm_connection_timeout: 300
+
+# VM Specifications
+vm_name: "k8s-test"
+vm_memory: 16000  # MB (16GB - KinD needs ~4GB minimum)
+vm_cpus: 12
+vm_disk_size: 200  # GB - OS disk
+
+# Storage Configuration
+# Specify the libvirt storage pool to use for VM disks
+# Leave empty to use the default path (/var/lib/libvirt/images)
+vm_storage_pool: "fast-pool2"
+
+# Network Configuration
+# Choose ONE of the following network types:
+# - 'network': Connect to a libvirt network (specify vm_network)
+# - 'bridge': Connect to a bridge interface (specify vm_bridge_name)
+# - 'direct': Direct attachment to physical NIC (specify vm_direct_interface)
+vm_network_type: "bridge"
+
+# Network type: 'network' - use libvirt network
+#vm_network: "default"
+
+# Network type: 'bridge' - use bridge interface
+vm_bridge_name: "bridge-main"
+
+# Network type: 'direct' - direct attachment to physical NIC
+#vm_direct_interface: ""
+#vm_direct_mode: "vepa"
+
+# Additional NIC configuration
+vm_nic_model: "virtio"
+vm_mac_address: ""
+
+# VM IP Configuration (leave empty for DHCP)
+vm_ip: ""
+vm_netmask: ""
+vm_gateway: ""
+vm_dns: ""
+
+# Base OS Configuration
+os_variant: "centos-stream9"
+base_image_url: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+
+# Cloud-init user configuration
+vm_user: "k8s-admin"
+vm_password: "CHANGE_ME"  # Set a secure password before use
+ssh_authorized_keys:
+  - "{{ lookup('file', playbook_dir + '/ssh-key.pub', errors='ignore') | default('') }}"
+
+# Kubernetes Configuration
+k8s_version: "v1.32.3"
+kind_version: "v0.27.0"
+kind_image: "kindest/node:v1.32.3"
+cluster_name: "kea-test"
+
+# Container Runtime (inside the VM)
+container_runtime: "podman"
+
+# Networking
+pod_network_cidr: "10.244.0.0/16"
+service_cidr: "10.96.0.0/12"
+
+# KinD Cluster Configuration
+kind_cluster_config:
+  extra_port_mappings:
+    - container_port: 30000
+      host_port: 30000
+      protocol: TCP
+    - container_port: 30001
+      host_port: 30001
+      protocol: TCP
+  extra_mounts: []
+
+# Artifacts and Kubeconfig
+artifacts_dir: "{{ playbook_dir }}/artifacts"
+kubeconfig_path: "{{ artifacts_dir }}/{{ vm_name }}/kubeconfig"
+
+# Timing and Retry Configuration
+# Cloud-init
+wait_cloud_init_retries: 60
+wait_cloud_init_delay: 5
+
+# Package installation
+package_install_retries: 3
+package_install_delay: 10
+
+# Download
+download_retries: 3
+download_delay: 10
+download_timeout: 120
+
+# K8s readiness
+k8s_ready_retries: 30
+k8s_ready_delay: 10
+node_ready_retries: 30
+node_ready_delay: 10
+
+# VM boot
+vm_boot_timeout: 300
+vm_ready_retries: 30
+vm_ready_delay: 10

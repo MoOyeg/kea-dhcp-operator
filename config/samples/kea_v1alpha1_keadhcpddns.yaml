@@ -1,0 +1,43 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaDhcpDdns
+metadata:
+  name: ddns-example
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  ip-address: "127.0.0.1"
+  port: 53001
+
+  # --- TSIG keys for authenticated DNS updates ---
+  tsig-keys:
+    - name: "ddns-key"
+      algorithm: "HMAC-SHA256"
+      secretRef:
+        name: ddns-tsig-secret    # Secret with key "secret"
+        key: secret
+
+  # --- Forward DNS zone ---
+  forward-ddns:
+    ddns-domains:
+      - name: "example.org."
+        key-name: "ddns-key"
+        dns-servers:
+          - ip-address: "10.0.0.53"
+            port: 53
+
+  # --- Reverse DNS zone ---
+  reverse-ddns:
+    ddns-domains:
+      - name: "1.168.192.in-addr.arpa."
+        key-name: "ddns-key"
+        dns-servers:
+          - ip-address: "10.0.0.53"
+            port: 53
+
+  # --- Logging ---
+  loggers:
+    - name: kea-dhcp-ddns
+      severity: INFO
+      output-options:
+        - output: stdout

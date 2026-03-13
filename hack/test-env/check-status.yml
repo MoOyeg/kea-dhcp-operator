@@ -1,0 +1,124 @@
+---
+# Check status of the Kubernetes VM and cluster
+
+- name: Single-Node Kubernetes on KVM - Status Check
+  hosts: k8s_vms
+  gather_facts: false
+
+  tasks:
+    - name: Check if VM exists on KVM host
+      ansible.builtin.shell: |
+        virsh list --all | grep -w "{{ vm_name }}" || true
+      register: vm_check
+      delegate_to: "{{ kvm_host }}"
+      become: true
+      changed_when: false
+
+    - name: Get VM state
+      ansible.builtin.shell: |
+        virsh domstate "{{ vm_name }}"
+      register: vm_state
+      delegate_to: "{{ kvm_host }}"
+      become: true
+      when: vm_check.stdout | length > 0
+      changed_when: false
+      failed_when: false
+
+    - name: Get VM IP address
+      block:
+        - name: Try to get IP from QEMU guest agent
+          ansible.builtin.shell: |
+            virsh qemu-agent-command {{ vm_name }} '{"execute":"guest-network-get-interfaces"}' 2>/dev/null | \
+            python3 -c "import sys, json; ifaces = json.load(sys.stdin)['return']; \
+            ip = next((addr['ip-address'] for iface in ifaces if iface.get('name') not in ['lo'] \
+            for addr in iface.get('ip-addresses', []) if addr.get('ip-address-type') == 'ipv4'), None); \
+            print(ip if ip else '')"
+          register: vm_ip_result
+          delegate_to: "{{ kvm_host }}"
+          become: true
+          changed_when: false
+          failed_when: false
+
+        - name: Set VM IP fact
+          ansible.builtin.set_fact:
+            vm_ip_address: "{{ vm_ip_result.stdout if vm_ip_result.stdout | length > 0 else 'Unknown' }}"
+      when:
+        - vm_check.stdout | length > 0
+        - vm_state.stdout == 'running'
+
+    - name: Check Kubernetes cluster status
+      block:
+        - name: Wait for SSH to be available
+          ansible.builtin.wait_for:
+            host: "{{ vm_ip_address }}"
+            port: 22
+            timeout: 30
+          delegate_to: localhost
+          when: vm_ip_address != 'Unknown'
+
+        - name: Get node status
+          ansible.builtin.shell: |
+            /usr/local/bin/kubectl get nodes -o wide
+          register: node_status
+          delegate_to: "{{ vm_ip_address }}"
+          become: true
+          vars:
+            ansible_user: "{{ vm_user }}"
+            ansible_password: "{{ vm_password }}"
+            ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+          failed_when: false
+          changed_when: false
+          when: vm_ip_address != 'Unknown'
+
+        - name: Get pod status
+          ansible.builtin.shell: |
+            /usr/local/bin/kubectl get pods -A -o wide
+          register: pod_status
+          delegate_to: "{{ vm_ip_address }}"
+          become: true
+          vars:
+            ansible_user: "{{ vm_user }}"
+            ansible_password: "{{ vm_password }}"
+            ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+          failed_when: false
+          changed_when: false
+          when: vm_ip_address != 'Unknown'
+
+        - name: Get CRDs
+          ansible.builtin.shell: |
+            /usr/local/bin/kubectl get crds -o name 2>/dev/null | grep kea || true
+          register: crd_status
+          delegate_to: "{{ vm_ip_address }}"
+          become: true
+          vars:
+            ansible_user: "{{ vm_user }}"
+            ansible_password: "{{ vm_password }}"
+            ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,publickey -o PubkeyAuthentication=no'
+          failed_when: false
+          changed_when: false
+          when: vm_ip_address != 'Unknown'
+      when:
+        - vm_check.stdout | length > 0
+        - vm_state.stdout == 'running'
+        - vm_ip_address is defined
+
+    - name: Display status summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - "Kubernetes VM Status"
+          - "================================================"
+          - "VM Name: {{ vm_name }}"
+          - "VM Exists: {{ 'Yes' if vm_check.stdout | length > 0 else 'No' }}"
+          - "VM State: {{ vm_state.stdout | default('N/A') }}"
+          - "VM IP: {{ vm_ip_address | default('N/A') }}"
+          - ""
+          - "Nodes:"
+          - "{{ node_status.stdout if node_status is defined and node_status.rc == 0 else 'Not available' }}"
+          - ""
+          - "All Pods:"
+          - "{{ pod_status.stdout if pod_status is defined and pod_status.rc == 0 else 'Not available' }}"
+          - ""
+          - "Kea CRDs:"
+          - "{{ crd_status.stdout if crd_status is defined and crd_status.rc == 0 else 'Not available' }}"
+          - "================================================"

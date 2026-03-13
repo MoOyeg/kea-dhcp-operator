@@ -1,0 +1,61 @@
+[
+  {
+    "type": "console.navigation/section",
+    "properties": {
+      "id": "kea-dhcp",
+      "name": "DHCP",
+      "perspective": "admin",
+      "insertAfter": "networking"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "kea-dhcp-servers",
+      "name": "DHCP Servers",
+      "href": "/kea-dhcp/servers",
+      "perspective": "admin",
+      "section": "kea-dhcp"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "kea-dhcp-leases",
+      "name": "Leases",
+      "href": "/kea-dhcp/leases",
+      "perspective": "admin",
+      "section": "kea-dhcp"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/kea-dhcp/servers",
+      "component": {
+        "$codeRef": "DHCPServerListPage"
+      }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": false,
+      "path": "/kea-dhcp/servers/:kind/:ns/:name",
+      "component": {
+        "$codeRef": "DHCPServerDetailPage"
+      }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/kea-dhcp/leases",
+      "component": {
+        "$codeRef": "LeasesPage"
+      }
+    }
+  }
+]

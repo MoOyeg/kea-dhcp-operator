@@ -1,0 +1,64 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaDhcp4Server
+metadata:
+  name: dhcp4-example
+  labels:
+    app.kubernetes.io/name: ocp-kea-dhcp
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # --- Global timers ---
+  valid-lifetime: 43200
+  renew-timer: 21600
+  rebind-timer: 32400
+
+  # --- Interface configuration ---
+  # Use "net1" when attaching via a NetworkAttachmentDefinition (NAD).
+  # The NAD interface appears as net1 (or net2, net3, ...) inside the pod.
+  # Use "eth0" if serving DHCP on the pod's primary network instead.
+  interfaces-config:
+    interfaces:
+      - net1
+    dhcp-socket-type: raw
+
+  # --- Pod placement with NAD ---
+  # Attach the pod to a secondary network via a NetworkAttachmentDefinition.
+  # Replace "dhcp-net" with the name of your NAD in the same namespace.
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"
+
+  # --- Lease persistence ---
+  lease-database:
+    type: memfile
+    persist: true
+    lfc-interval: 3600
+
+  # --- Global DHCP options ---
+  option-data:
+    - name: routers
+      data: "192.168.1.1"
+    - name: domain-name-servers
+      data: "8.8.8.8, 8.8.4.4"
+    - name: domain-name
+      data: "example.org"
+
+  # --- Subnets ---
+  subnet4:
+    - id: 1
+      subnet: "192.168.1.0/24"
+      pools:
+        - pool: "192.168.1.100 - 192.168.1.200"
+      reservations:
+        - hw-address: "1a:1b:1c:1d:1e:1f"
+          ip-address: "192.168.1.10"
+          hostname: "workstation-a"
+        - hw-address: "2a:2b:2c:2d:2e:2f"
+          ip-address: "192.168.1.11"
+          hostname: "workstation-b"
+
+  # --- Logging ---
+  loggers:
+    - name: kea-dhcp4
+      severity: INFO
+      output-options:
+        - output: stdout

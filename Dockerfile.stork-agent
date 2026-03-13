@@ -1,0 +1,54 @@
+# Build the stork-agent binary from ISC Stork source
+FROM golang:1.25 AS builder
+
+ARG STORK_VERSION=v2.4.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        rake \
+        ruby \
+        python3 \
+        python3-venv \
+        python3-sphinx \
+        python3-sphinx-rtd-theme \
+        wget \
+        gcc \
+        libc6-dev \
+        make \
+        protobuf-compiler \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN git clone --depth 1 --branch ${STORK_VERSION} https://gitlab.isc.org/isc-projects/stork.git .
+
+# Install Go dependencies
+RUN cd backend && go mod download
+
+# Build the agent distribution
+RUN rake build:agent_dist && rm -rf /app/dist/agent/lib
+
+# Runtime stage
+FROM debian:12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/dist/agent /
+
+# Install Kea version stubs so stork-agent can detect Kea daemons running in
+# a sibling container (shared PID namespace). The agent runs `kea-dhcp4 -v` etc.
+# to verify daemon presence; these stubs satisfy that check.
+ARG KEA_VERSION=3.0.2
+RUN for bin in kea-dhcp4 kea-dhcp6 kea-ctrl-agent kea-dhcp-ddns; do \
+      printf '#!/bin/sh\necho "%s"\n' "${KEA_VERSION}" > /usr/sbin/${bin} && \
+      chmod +x /usr/sbin/${bin}; \
+    done
+
+EXPOSE 8080
+EXPOSE 9547
+
+ENTRYPOINT ["/usr/bin/stork-agent"]

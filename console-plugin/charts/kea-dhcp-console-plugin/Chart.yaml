@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kea-dhcp-console-plugin
+description: OpenShift Console plugin for managing Kea DHCP servers and viewing leases
+type: application
+version: 0.1.0
+appVersion: "0.0.1"

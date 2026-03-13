@@ -1,0 +1,57 @@
+# Use specific tagged version instead of :latest for reproducibility
+FROM registry.access.redhat.com/ubi9/ubi:9.3
+
+# Build arguments for version control
+ARG ANSIBLE_VERSION=8.5.0
+ARG ANSIBLE_CORE_VERSION=2.15.8
+ARG ANSIBLE_LINT_VERSION=6.22.1
+ARG YAMLLINT_VERSION=1.33.0
+ARG COMMUNITY_GENERAL_VERSION=8.1.0
+ARG COMMUNITY_LIBVIRT_VERSION=1.3.0
+ARG ANSIBLE_POSIX_VERSION=1.5.4
+
+# Metadata labels
+LABEL maintainer="ocp-kea-dhcp" \
+      version="1.0.0" \
+      description="Ansible runner for single-node Kubernetes KVM test environment" \
+      org.opencontainers.image.source="https://github.com/MoOyeg/kea-dhcp-operator" \
+      org.opencontainers.image.title="Ansible K8s KVM Runner" \
+      org.opencontainers.image.description="Container with Ansible and required collections for K8s KVM test env deployment"
+
+# Install system packages in a single layer for efficiency
+RUN dnf install -y \
+    python3 \
+    python3-pip \
+    git \
+    openssh-clients \
+    sshpass \
+    wget \
+    iputils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Install Python packages with pinned versions
+RUN pip3 install --no-cache-dir \
+    ansible==${ANSIBLE_VERSION} \
+    ansible-lint==${ANSIBLE_LINT_VERSION} \
+    yamllint==${YAMLLINT_VERSION} \
+    jinja2==3.1.2 \
+    netaddr==0.9.0
+
+# Install Ansible collections with pinned versions
+RUN ansible-galaxy collection install \
+    community.general:==${COMMUNITY_GENERAL_VERSION} \
+    community.libvirt:==${COMMUNITY_LIBVIRT_VERSION} \
+    ansible.posix:==${ANSIBLE_POSIX_VERSION}
+
+# Create workspace directory
+WORKDIR /workspace
+
+# Set entrypoint
+ENTRYPOINT ["ansible-playbook"]
+CMD ["--version"]
+
+# Document exposed functionality
+# This container runs ansible-playbook with pre-installed collections
+# Mount /workspace with your playbooks and inventory
+# Example: podman run --rm -v $(pwd):/workspace:Z localhost/ansible-k8s-runner:latest deploy-k8s.yml

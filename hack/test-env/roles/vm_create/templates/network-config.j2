@@ -1,0 +1,15 @@
+version: 2
+ethernets:
+  eth0:
+{% if vm_ip | length > 0 %}
+    addresses:
+      - {{ vm_ip }}/{{ vm_netmask | ipaddr('prefix') }}
+    gateway4: {{ vm_gateway }}
+    nameservers:
+      addresses:
+        - {{ vm_dns }}
+{% else %}
+    dhcp4: true
+    dhcp6: false
+{% endif %}
+    optional: false
