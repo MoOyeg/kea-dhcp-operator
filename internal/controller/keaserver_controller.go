@@ -294,28 +294,51 @@ func (r *KeaServerReconciler) reconcileStorkServer(ctx context.Context, server *
 	return opErr
 }
 
-// isChildReady checks if a child CR has phase "Running".
-// It uses a type-switch approach since each child type has its own status.
+// isChildReady checks if a child CR is ready by examining both its Phase
+// and its Ready condition. A child is considered ready when its Phase is
+// "Running" and it has a Ready condition with status "True".
 func (r *KeaServerReconciler) isChildReady(ctx context.Context, namespace, name string, obj client.Object) bool {
 	key := types.NamespacedName{Name: name, Namespace: namespace}
 	if err := r.Get(ctx, key, obj); err != nil {
 		return false
 	}
 
+	var phase string
+	var conditions []keav1alpha1.ConditionStatus
+
 	switch child := obj.(type) {
 	case *keav1alpha1.KeaDhcp4Server:
-		return child.Status.Phase == "Running"
+		phase = child.Status.Phase
+		conditions = child.Status.Conditions
 	case *keav1alpha1.KeaDhcp6Server:
-		return child.Status.Phase == "Running"
+		phase = child.Status.Phase
+		conditions = child.Status.Conditions
 	case *keav1alpha1.KeaControlAgent:
-		return child.Status.Phase == "Running"
+		phase = child.Status.Phase
+		conditions = child.Status.Conditions
 	case *keav1alpha1.KeaDhcpDdns:
-		return child.Status.Phase == "Running"
+		phase = child.Status.Phase
+		conditions = child.Status.Conditions
 	case *keav1alpha1.KeaStorkServer:
-		return child.Status.Phase == "Running"
+		phase = child.Status.Phase
+		conditions = child.Status.Conditions
+	default:
+		return false
 	}
 
-	return false
+	if phase != "Running" {
+		return false
+	}
+
+	for _, c := range conditions {
+		if c.Type == keav1alpha1.ConditionTypeReady {
+			return c.Status == "True"
+		}
+	}
+
+	// Phase is Running but no Ready condition yet — treat as ready
+	// for backward compatibility with controllers that haven't set conditions.
+	return true
 }
 
 // SetupWithManager sets up the controller with the Manager.

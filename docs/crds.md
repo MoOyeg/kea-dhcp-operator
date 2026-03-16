@@ -301,7 +301,11 @@ metadata:
 spec:
   replicas: 2
   interfaces-config:
-    interfaces: ["eth0"]
+    interfaces: ["net1"]
+    dhcp-socket-type: raw
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"   # Your NAD name
   subnet4:
     - id: 1
       subnet: "192.168.1.0/24"
@@ -318,13 +322,12 @@ spec:
     max-unacked-clients: 10
     peers:
       - name: server1
-        url: "http://dhcp4-ha-dhcp4-0.dhcp4-ha-dhcp4-hl.kea-system.svc.cluster.local:8000/"
         role: primary
         auto-failover: true
       - name: server2
-        url: "http://dhcp4-ha-dhcp4-1.dhcp4-ha-dhcp4-hl.kea-system.svc.cluster.local:8000/"
         role: secondary
         auto-failover: true
+    # Peer URLs are auto-generated from StatefulSet DNS
 ```
 
 ### HA with Network Attachment Definition (NAD)

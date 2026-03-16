@@ -18,67 +18,101 @@ package controller
 
 import (
 	"context"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"testing"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-var _ = Describe("KeaServer Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+func TestIsChildReady(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := keav1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add scheme: %v", err)
+	}
 
-		ctx := context.Background()
+	t.Run("returns false when child does not exist", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+		ready := r.isChildReady(context.Background(), "default", "nonexistent", &keav1alpha1.KeaDhcp4Server{})
+		if ready {
+			t.Error("expected false for non-existent child")
 		}
-		keaserver := &keav1alpha1.KeaServer{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind KeaServer")
-			err := k8sClient.Get(ctx, typeNamespacedName, keaserver)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &keav1alpha1.KeaServer{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
-
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &keav1alpha1.KeaServer{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance KeaServer")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &KeaServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
 	})
-})
+
+	t.Run("returns false when phase is Progressing", func(t *testing.T) {
+		child := &keav1alpha1.KeaDhcp4Server{
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: "default"},
+			Status: keav1alpha1.KeaDhcp4ServerStatus{
+				ComponentStatus: keav1alpha1.ComponentStatus{Phase: "Progressing"},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
+		r := &KeaServerReconciler{Client: c, Scheme: scheme}
+
+		ready := r.isChildReady(context.Background(), "default", "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
+		if ready {
+			t.Error("expected false for Progressing phase")
+		}
+	})
+
+	t.Run("returns true when phase is Running and Ready condition True", func(t *testing.T) {
+		child := &keav1alpha1.KeaDhcp4Server{
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: "default"},
+			Status: keav1alpha1.KeaDhcp4ServerStatus{
+				ComponentStatus: keav1alpha1.ComponentStatus{
+					Phase: "Running",
+					Conditions: []keav1alpha1.ConditionStatus{
+						{Type: keav1alpha1.ConditionTypeReady, Status: "True"},
+					},
+				},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
+		r := &KeaServerReconciler{Client: c, Scheme: scheme}
+
+		ready := r.isChildReady(context.Background(), "default", "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
+		if !ready {
+			t.Error("expected true for Running phase with Ready=True condition")
+		}
+	})
+
+	t.Run("returns false when phase is Running but Ready condition False", func(t *testing.T) {
+		child := &keav1alpha1.KeaDhcp6Server{
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp6-child", Namespace: "default"},
+			Status: keav1alpha1.KeaDhcp6ServerStatus{
+				ComponentStatus: keav1alpha1.ComponentStatus{
+					Phase: "Running",
+					Conditions: []keav1alpha1.ConditionStatus{
+						{Type: keav1alpha1.ConditionTypeReady, Status: "False"},
+					},
+				},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
+		r := &KeaServerReconciler{Client: c, Scheme: scheme}
+
+		ready := r.isChildReady(context.Background(), "default", "dhcp6-child", &keav1alpha1.KeaDhcp6Server{})
+		if ready {
+			t.Error("expected false for Running phase with Ready=False condition")
+		}
+	})
+
+	t.Run("returns true when phase is Running with no conditions (backward compat)", func(t *testing.T) {
+		child := &keav1alpha1.KeaControlAgent{
+			ObjectMeta: metav1.ObjectMeta{Name: "ca-child", Namespace: "default"},
+			Status: keav1alpha1.KeaControlAgentStatus{
+				ComponentStatus: keav1alpha1.ComponentStatus{Phase: "Running"},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
+		r := &KeaServerReconciler{Client: c, Scheme: scheme}
+
+		ready := r.isChildReady(context.Background(), "default", "ca-child", &keav1alpha1.KeaControlAgent{})
+		if !ready {
+			t.Error("expected true for Running phase with no conditions (backward compat)")
+		}
+	})
+}

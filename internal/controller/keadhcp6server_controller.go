@@ -319,30 +319,12 @@ func (r *KeaDhcp6ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&keav1alpha1.KeaDhcp6Server{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&monitoringv1.PodMonitor{}).
-		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(enqueueDhcp6ServersInNamespace(mgr.GetClient()))).
+		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueStorkDependents(listStorkEnabledDhcp6, mgr.GetClient()))).
 		Complete(r)
-}
-
-// enqueueDhcp6ServersInNamespace returns a handler that enqueues all KeaDhcp6Servers
-// in the same namespace when a KeaStorkServer is created, updated, or deleted.
-func enqueueDhcp6ServersInNamespace(c client.Reader) handler.MapFunc {
-	return func(ctx context.Context, obj client.Object) []ctrl.Request {
-		serverList := &keav1alpha1.KeaDhcp6ServerList{}
-		if err := c.List(ctx, serverList, client.InNamespace(obj.GetNamespace())); err != nil {
-			return nil
-		}
-		var requests []ctrl.Request
-		for _, s := range serverList.Items {
-			if s.Spec.Stork != nil && s.Spec.Stork.Enabled {
-				requests = append(requests, ctrl.Request{
-					NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
-				})
-			}
-		}
-		return requests
-	}
 }

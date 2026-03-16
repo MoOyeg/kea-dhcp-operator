@@ -32,8 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -340,6 +342,50 @@ func reconcileRoute(ctx context.Context, c client.Client, scheme *runtime.Scheme
 	}
 
 	return nil
+}
+
+// enqueueStorkDependents returns a handler.MapFunc that lists CRs in the same
+// namespace as the triggering KeaStorkServer and returns reconcile requests for
+// those with Stork enabled. The listFn callback lists and filters the CRs.
+// This eliminates duplication between enqueueDhcp4/6ServersInNamespace.
+func enqueueStorkDependents(listFn func(ctx context.Context, c client.Reader, namespace string) []ctrl.Request, c client.Reader) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []ctrl.Request {
+		return listFn(ctx, c, obj.GetNamespace())
+	}
+}
+
+// listStorkEnabledDhcp4 lists KeaDhcp4Servers with Stork enabled in the given namespace.
+func listStorkEnabledDhcp4(ctx context.Context, c client.Reader, namespace string) []ctrl.Request {
+	serverList := &keav1alpha1.KeaDhcp4ServerList{}
+	if err := c.List(ctx, serverList, client.InNamespace(namespace)); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for _, s := range serverList.Items {
+		if s.Spec.Stork != nil && s.Spec.Stork.Enabled {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
+			})
+		}
+	}
+	return requests
+}
+
+// listStorkEnabledDhcp6 lists KeaDhcp6Servers with Stork enabled in the given namespace.
+func listStorkEnabledDhcp6(ctx context.Context, c client.Reader, namespace string) []ctrl.Request {
+	serverList := &keav1alpha1.KeaDhcp6ServerList{}
+	if err := c.List(ctx, serverList, client.InNamespace(namespace)); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for _, s := range serverList.Items {
+		if s.Spec.Stork != nil && s.Spec.Stork.Enabled {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
+			})
+		}
+	}
+	return requests
 }
 
 // fillPeerURLs populates empty peer URLs in the HA config using the StatefulSet

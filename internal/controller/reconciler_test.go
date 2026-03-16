@@ -20,7 +20,121 @@ import (
 	"testing"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
+
+func TestSetCondition(t *testing.T) {
+	t.Run("appends new condition", func(t *testing.T) {
+		var conditions []keav1alpha1.ConditionStatus
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "Ready", "All good")
+
+		if len(conditions) != 1 {
+			t.Fatalf("expected 1 condition, got %d", len(conditions))
+		}
+		if conditions[0].Type != keav1alpha1.ConditionTypeReady {
+			t.Errorf("expected type %q, got %q", keav1alpha1.ConditionTypeReady, conditions[0].Type)
+		}
+		if conditions[0].Status != "True" {
+			t.Errorf("expected status True, got %q", conditions[0].Status)
+		}
+		if conditions[0].LastTransitionTime == "" {
+			t.Error("expected LastTransitionTime to be set")
+		}
+	})
+
+	t.Run("updates existing condition same status", func(t *testing.T) {
+		conditions := []keav1alpha1.ConditionStatus{
+			{Type: keav1alpha1.ConditionTypeReady, Status: "True", Reason: "OldReason", LastTransitionTime: "2026-01-01T00:00:00Z"},
+		}
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "NewReason", "updated msg")
+
+		if len(conditions) != 1 {
+			t.Fatalf("expected 1 condition, got %d", len(conditions))
+		}
+		if conditions[0].Reason != "NewReason" {
+			t.Errorf("expected reason NewReason, got %q", conditions[0].Reason)
+		}
+		// LastTransitionTime should NOT change when status stays the same.
+		if conditions[0].LastTransitionTime != "2026-01-01T00:00:00Z" {
+			t.Errorf("expected LastTransitionTime unchanged, got %q", conditions[0].LastTransitionTime)
+		}
+	})
+
+	t.Run("updates existing condition different status", func(t *testing.T) {
+		conditions := []keav1alpha1.ConditionStatus{
+			{Type: keav1alpha1.ConditionTypeReady, Status: "False", Reason: "NotReady", LastTransitionTime: "2026-01-01T00:00:00Z"},
+		}
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "Ready", "now ready")
+
+		if conditions[0].Status != "True" {
+			t.Errorf("expected status True, got %q", conditions[0].Status)
+		}
+		// LastTransitionTime SHOULD change when status transitions.
+		if conditions[0].LastTransitionTime == "2026-01-01T00:00:00Z" {
+			t.Error("expected LastTransitionTime to be updated on status transition")
+		}
+	})
+
+	t.Run("appends second condition type", func(t *testing.T) {
+		conditions := []keav1alpha1.ConditionStatus{
+			{Type: keav1alpha1.ConditionTypeReady, Status: "True", Reason: "Ready"},
+		}
+		setCondition(&conditions, keav1alpha1.ConditionTypeProgressing, "False", "Done", "done")
+
+		if len(conditions) != 2 {
+			t.Fatalf("expected 2 conditions, got %d", len(conditions))
+		}
+		if conditions[1].Type != keav1alpha1.ConditionTypeProgressing {
+			t.Errorf("expected second condition type Progressing, got %q", conditions[1].Type)
+		}
+	})
+}
+
+func TestDbCredentialEnvVars(t *testing.T) {
+	t.Run("nil db returns empty", func(t *testing.T) {
+		envs, user, pass := dbCredentialEnvVars("PREFIX", nil)
+		if len(envs) != 0 || user != "" || pass != "" {
+			t.Errorf("expected empty results for nil db, got envs=%d user=%q pass=%q", len(envs), user, pass)
+		}
+	})
+
+	t.Run("db without credentialsSecretRef returns empty", func(t *testing.T) {
+		db := &keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMySQL}
+		envs, user, pass := dbCredentialEnvVars("PREFIX", db)
+		if len(envs) != 0 || user != "" || pass != "" {
+			t.Errorf("expected empty results, got envs=%d user=%q pass=%q", len(envs), user, pass)
+		}
+	})
+
+	t.Run("db with credentialsSecretRef generates env vars", func(t *testing.T) {
+		db := &keav1alpha1.DatabaseConfig{
+			Type: keav1alpha1.DatabaseTypeMySQL,
+			CredentialsSecretRef: &corev1.LocalObjectReference{Name: "my-secret"},
+		}
+		envs, user, pass := dbCredentialEnvVars("KEA_DB", db)
+		if len(envs) != 2 {
+			t.Fatalf("expected 2 env vars, got %d", len(envs))
+		}
+		if envs[0].Name != "KEA_DB_USER" {
+			t.Errorf("expected env name KEA_DB_USER, got %q", envs[0].Name)
+		}
+		if envs[0].ValueFrom.SecretKeyRef.Name != "my-secret" {
+			t.Errorf("expected secret name my-secret, got %q", envs[0].ValueFrom.SecretKeyRef.Name)
+		}
+		if envs[0].ValueFrom.SecretKeyRef.Key != "username" {
+			t.Errorf("expected key 'username', got %q", envs[0].ValueFrom.SecretKeyRef.Key)
+		}
+		if envs[1].Name != "KEA_DB_PASSWORD" {
+			t.Errorf("expected env name KEA_DB_PASSWORD, got %q", envs[1].Name)
+		}
+		if user != "$KEA_DB_USER" {
+			t.Errorf("expected user placeholder $KEA_DB_USER, got %q", user)
+		}
+		if pass != "$KEA_DB_PASSWORD" {
+			t.Errorf("expected pass placeholder $KEA_DB_PASSWORD, got %q", pass)
+		}
+	})
+}
 
 func TestFillPeerURLs(t *testing.T) {
 	t.Run("nil HA is a no-op", func(t *testing.T) {

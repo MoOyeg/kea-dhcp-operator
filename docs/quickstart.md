@@ -36,7 +36,12 @@ metadata:
   namespace: kea-system
 spec:
   interfaces-config:
-    interfaces: ["eth0"]
+    interfaces: ["net1"]
+    dhcp-socket-type: raw
+
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"   # Your NAD name
 
   subnet4:
     - id: 1
@@ -81,7 +86,12 @@ spec:
   replicas: 2
 
   interfaces-config:
-    interfaces: ["eth0"]
+    interfaces: ["net1"]
+    dhcp-socket-type: raw
+
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"   # Your NAD name
 
   subnet4:
     - id: 1
@@ -133,32 +143,7 @@ oc logs -n kea-system dhcp4-ha-dhcp4-0 -c dhcp4 | grep HA_STATE_TRANSITION
 
 Both pods should reach `LOAD-BALANCING` state.
 
-## 4. Use a Secondary Network (NAD)
-
-To serve DHCP on a VLAN or secondary network via a `NetworkAttachmentDefinition`:
-
-1. Label the namespace so the CUDN creates the NAD:
-
-   ```bash
-   oc label namespace kea-system dhcp_test=true
-   ```
-
-2. Change the CR to use the NAD interface:
-
-   ```yaml
-   spec:
-     interfaces-config:
-       interfaces: ["net1"]
-       dhcp-socket-type: raw
-
-     placement:
-       podAnnotations:
-         k8s.v1.cni.cncf.io/networks: dhcp    # Your NAD name
-   ```
-
-See [HA Guide — Appendix B](ha.md#appendix-b-ha-on-a-secondary-network-nad) for the full NAD setup.
-
-## 5. Enable Monitoring (Stork)
+## 4. Enable Monitoring (Stork)
 
 Add the stork sidecar for Prometheus metrics:
 
@@ -181,7 +166,7 @@ spec:
 
 See [Stork Integration](stork.md) for details.
 
-## 6. Use MySQL for Lease Storage
+## 5. Use MySQL for Lease Storage
 
 For durable leases across pod restarts, use a MySQL-compatible backend:
 

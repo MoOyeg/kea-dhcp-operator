@@ -524,7 +524,8 @@ func (r *KeaDhcp4ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&monitoringv1.PodMonitor{}).
-		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(enqueueDhcp4ServersInNamespace(mgr.GetClient()))).
+		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueStorkDependents(listStorkEnabledDhcp4, mgr.GetClient()))).
 		Complete(r)
 }
 
@@ -554,23 +555,3 @@ func computeNADAddresses(subnetCIDR string, replicas int) []string {
 	return addrs
 }
 
-// enqueueDhcp4ServersInNamespace returns a handler that enqueues all KeaDhcp4Servers
-// in the same namespace when a KeaStorkServer is created, updated, or deleted.
-// This triggers re-reconciliation so stork-agents auto-discover the server.
-func enqueueDhcp4ServersInNamespace(c client.Reader) handler.MapFunc {
-	return func(ctx context.Context, obj client.Object) []ctrl.Request {
-		serverList := &keav1alpha1.KeaDhcp4ServerList{}
-		if err := c.List(ctx, serverList, client.InNamespace(obj.GetNamespace())); err != nil {
-			return nil
-		}
-		var requests []ctrl.Request
-		for _, s := range serverList.Items {
-			if s.Spec.Stork != nil && s.Spec.Stork.Enabled {
-				requests = append(requests, ctrl.Request{
-					NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
-				})
-			}
-		}
-		return requests
-	}
-}

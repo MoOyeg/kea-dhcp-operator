@@ -1,85 +1,85 @@
 # Code Review - OCP Kea DHCP Operator
 
 Date: 2026-03-10
+Last updated: 2026-03-16
 
 ## Critical / High Priority
 
-### 1. No Event Recording in Any Controller
-All 6 controllers lack `record.EventRecorder`. Users can't see reconciliation history via `kubectl describe`.
+### 1. ~~No Event Recording in Any Controller~~ — FIXED
+All 6 controllers now have `record.EventRecorder` and emit events via `r.Recorder.Event()`.
 
-**Files**: All controller files in `internal/controller/`
+### 2. ~~Masked Status Update Errors~~ — FIXED
+All final status updates return errors properly. Early error-path updates are logged (acceptable).
 
-### 2. Masked Status Update Errors
-When config rendering fails, the status update error is discarded with `_ = r.Status().Update(ctx, server)`.
+### 3. ~~Missing `RenderJSONWithServerName()` on DHCP6 Renderer~~ — FIXED
+Method exists at `internal/kea/dhcp6_config.go:46-50`, matching DHCP4 implementation.
 
-**Files**: keadhcp4server_controller.go:133, keadhcp6server_controller.go:109, keacontrolagent_controller.go:90, keadhcpddns_controller.go:90
+### 4. ~~Missing Watches for Reconciled Resources~~ — FIXED
+PodMonitors and StatefulSets now watched via `Owns()` in both DHCP4 and DHCP6 controllers.
+Routes are reconciled via unstructured objects (no typed `Owns()` possible without Route CRD import).
 
-### 3. Missing `RenderJSONWithServerName()` on DHCP6 Renderer
-dhcp4_config.go has this for HA StatefulSet per-ordinal configs; dhcp6_config.go lacks it entirely.
+### 5. ~~Missing SecurityContext on Init Container, Stork Agent, and Stork Server~~ — FIXED
+All containers now drop ALL capabilities via `SecurityContext`.
 
-**Files**: internal/kea/dhcp6_config.go
+### 6. ~~Hardcoded `busybox:latest` Init Container Image~~ — FIXED
+Pinned to `busybox:1.37` and configurable via `StatefulSetParams.InitContainerImage`.
 
-### 4. Missing Watches for Reconciled Resources
-Routes and PodMonitors are created/reconciled but not watched via `Owns()` in `SetupWithManager`.
-
-**Files**: keadhcp4server_controller.go, keadhcp6server_controller.go, keastorkserver_controller.go
-
-### 5. Missing SecurityContext on Init Container, Stork Agent, and Stork Server
-Main Kea containers properly drop capabilities. These three containers have no security context.
-
-**Files**: statefulset.go:274-280, stork.go:107-137, stork_server.go:123-156
-
-### 6. Hardcoded `busybox:latest` Init Container Image
-Non-deterministic, breaks air-gapped environments, no way to override.
-
-**Files**: statefulset.go:36
-
-### 7. Missing ServiceAccountName in Stork Server Deployment
-Pods use default SA instead of the application SA, causing RBAC issues.
-
-**Files**: stork_server.go:121-162
+### 7. ~~Missing ServiceAccountName in Stork Server Deployment~~ — FIXED
+`ServiceAccountName` is set in the PodSpec at `stork_server.go:287`.
 
 ---
 
 ## Medium Priority
 
-### 8. No Requeue Logic for Transient Failures
+### 8. No Requeue Logic for Transient Failures — OPEN
 No controller uses `ctrl.Result{RequeueAfter: ...}`. All return `ctrl.Result{}, nil` on success.
+Note: `ctrl.Result{}, err` does trigger workqueue retry with backoff, so this is not critical.
 
-### 9. Massive Controller Code Duplication
-keadhcp4server_controller.go (501 lines) and keadhcp6server_controller.go (304 lines) share nearly identical logic.
+### 9. ~~Massive Controller Code Duplication~~ — FIXED
+Common helpers extracted to `reconciler.go` (reconcileResource, setCondition, dbCredentialEnvVars, fillPeerURLs, enqueueStorkDependents, listStorkEnabledDhcp4/6). Remaining structural differences between DHCP4/DHCP6 are intentional (DHCP4 has HA StatefulSet branching).
 
-### 10. Silent Hook Parameter Errors
-config.go:174 — if `json.Unmarshal` of hook parameters fails, parameters are silently dropped.
+### 10. Silent Hook Parameter Errors — OPEN
+`internal/kea/config.go:172-176` — if `json.Unmarshal` of hook parameters fails, parameters are silently dropped. Should at minimum log a warning.
 
-### 11. Inconsistent API Type Validation
-- Pointer fields marked `+kubebuilder:validation:Required`
-- `ControlSocket.SocketType` has Enum but no Required marker
-- `KeaServerStatus` doesn't embed `ComponentStatus`
+### 11. ~~Inconsistent API Type Validation~~ — FIXED
+- `AuthClient.PasswordSecretKeyRef` and `TSIGKey.SecretRef` changed from Required pointer to optional
+- `ControlSocket.SocketType` now has `+kubebuilder:validation:Required` marker
+- `KeaServerStatus` defines its own fields instead of embedding `ComponentStatus` (by design)
 
-### 12. HostNetwork Not Passed to StatefulSet in HA Mode
-keadhcp4server_controller.go:267-294 — hostNetwork extracted but not passed to StatefulSet params.
+### 12. ~~HostNetwork Not Passed to StatefulSet in HA Mode~~ — FIXED
+`HostNetwork` properly passed via `StatefulSetParams` at `keadhcp4server_controller.go:299`.
 
-### 13. Weak KeaServer Child Status Checking
-keaserver_controller.go:293-313 — `isChildReady()` only checks `Phase == "Running"`, ignoring conditions.
+### 13. ~~Weak KeaServer Child Status Checking~~ — FIXED
+`isChildReady()` now checks both `Phase == "Running"` and the `Ready` condition status.
 
-### 14. Hardcoded Route Domain in KeaStorkServer
-keastorkserver_controller.go:172-174 — uses `"cluster.local"` instead of actual cluster apps domain.
+### 14. Hardcoded Route Domain in KeaStorkServer — OPEN
+`keastorkserver_controller.go:220` uses `"cluster.local"` instead of actual cluster apps domain.
+Note: The code later fetches the actual Route hostname, so this only affects the initial status URL.
 
 ---
 
 ## Low Priority
 
-### 15. Test Coverage Gaps
-- Controller tests are all scaffolding with TODOs
-- DHCP6 config has 3 tests vs DHCP4's 5
-- No tests for StatefulSet creation, NAD IP logic, or security contexts
+### 15. ~~Test Coverage Gaps~~ — FIXED
+- Controller scaffolding tests replaced with real unit tests using fake client
+- Tests cover: `setCondition`, `dbCredentialEnvVars`, `fillPeerURLs`, `computeNADAddresses`, `isChildReady`
+- DHCP6 config tests expanded (shared networks, HA, server name override, database) to match DHCP4
+- Total: 20 controller unit tests + 13 config renderer tests
 
-### 16. Makefile VERSION Mismatch
-Makefile:6 has `VERSION ?= 0.0.3` but deployed version is v0.0.14.
+### 16. Makefile VERSION Mismatch — OPEN
+Makefile:6 has `VERSION ?= 0.0.3` but deployed version is v0.0.19.
 
-### 17. Subnet4/Subnet6 Type Duplication
+### 17. Subnet4/Subnet6 Type Duplication — OPEN
 keadhcp4server_types.go and keadhcp6server_types.go share many identical fields.
 
-### 18. NAD IP Assignment Logic Duplication
+### 18. NAD IP Assignment Logic Duplication — OPEN
 Same shell script pattern duplicated between deployment.go and statefulset.go.
+
+---
+
+## Summary
+
+| Status | Count | Issues |
+|--------|-------|--------|
+| FIXED | 12 | #1, #2, #3, #4, #5, #6, #7, #9, #11, #12, #13, #15 |
+| OPEN | 6 | #8, #10, #14, #16, #17, #18 |

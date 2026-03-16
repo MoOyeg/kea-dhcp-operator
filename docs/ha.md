@@ -139,17 +139,12 @@ spec:
   replicas: 2
 
   interfaces-config:
-    interfaces: ["eth0"]
-
-#if using a NAD
-  interfaces-config:
     interfaces: ["net1"]           # NAD interface (not eth0)
-    dhcp-socket-type: raw  
+    dhcp-socket-type: raw
 
-#if using a NAD
   placement:
     podAnnotations:
-      k8s.v1.cni.cncf.io/networks: vlan500 #NAD_NAME
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"   # Your NAD name
 
   # Subnet configuration
   subnet4:

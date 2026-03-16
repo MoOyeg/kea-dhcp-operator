@@ -46,7 +46,11 @@ metadata:
   namespace: kea-system
 spec:
   interfaces-config:
-    interfaces: ["eth0"]
+    interfaces: ["net1"]
+    dhcp-socket-type: raw
+  placement:
+    podAnnotations:
+      k8s.v1.cni.cncf.io/networks: "dhcp-net"   # Your NAD name
   subnet4:
     - id: 1
       subnet: "192.168.1.0/24"

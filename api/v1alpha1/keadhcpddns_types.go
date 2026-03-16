@@ -38,8 +38,7 @@ type TSIGKey struct {
 	DigestBits *int32 `json:"digest-bits,omitempty"`
 
 	// Reference to a Secret key containing the base64-encoded TSIG secret.
-	// +kubebuilder:validation:Required
-	SecretRef *corev1.SecretKeySelector `json:"secretRef"`
+	SecretRef *corev1.SecretKeySelector `json:"secretRef,omitempty"`
 }
 
 // DDNSConfig holds forward or reverse DDNS domain configuration.

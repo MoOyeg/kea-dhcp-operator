@@ -257,7 +257,7 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.19
+    containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.21
     description: Manages ISC Kea DHCP servers on Kubernetes and OpenShift
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -345,7 +345,7 @@ spec:
 
     ### Getting Started
 
-    Create a DHCPv4 server:
+    Create a DHCPv4 server on a secondary network (NAD):
 
     ```yaml
     apiVersion: kea.openshift.io/v1alpha1
@@ -355,7 +355,11 @@ spec:
     spec:
       valid-lifetime: 43200
       interfaces-config:
-        interfaces: ["eth0"]
+        interfaces: ["net1"]
+        dhcp-socket-type: raw
+      placement:
+        podAnnotations:
+          k8s.v1.cni.cncf.io/networks: "dhcp-net"
       subnet4:
         - id: 1
           subnet: "192.168.1.0/24"

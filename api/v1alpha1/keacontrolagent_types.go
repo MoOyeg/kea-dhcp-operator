@@ -66,8 +66,7 @@ type AuthClient struct {
 	User string `json:"user"`
 
 	// Reference to a Secret key containing the password.
-	// +kubebuilder:validation:Required
-	PasswordSecretKeyRef *corev1.SecretKeySelector `json:"passwordSecretKeyRef"`
+	PasswordSecretKeyRef *corev1.SecretKeySelector `json:"passwordSecretKeyRef,omitempty"`
 }
 
 // ========== KeaControlAgent Spec ==========

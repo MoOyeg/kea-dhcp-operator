@@ -1373,7 +1373,6 @@ spec:
                   required:
                   - algorithm
                   - name
-                  - secretRef
                   type: object
                 type: array
             type: object

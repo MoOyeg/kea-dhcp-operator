@@ -96,7 +96,6 @@ spec:
                           description: Username for authentication.
                           type: string
                       required:
-                      - passwordSecretKeyRef
                       - user
                       type: object
                     type: array

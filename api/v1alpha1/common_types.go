@@ -261,6 +261,7 @@ type HookLibrary struct {
 // ControlSocket defines the Kea daemon control socket configuration.
 type ControlSocket struct {
 	// Socket type: "unix" for UNIX domain socket, "http" for HTTP.
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=unix;http
 	SocketType string `json:"socket-type"`
 

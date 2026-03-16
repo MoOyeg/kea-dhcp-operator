@@ -111,7 +111,6 @@ spec:
                               description: Username for authentication.
                               type: string
                           required:
-                          - passwordSecretKeyRef
                           - user
                           type: object
                         type: array
@@ -8556,7 +8555,6 @@ spec:
                       required:
                       - algorithm
                       - name
-                      - secretRef
                       type: object
                     type: array
                 type: object
