@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/mooyeg/ocp-kea-dhcp
-  newTag: v0.0.21
+  newTag: v0.0.24

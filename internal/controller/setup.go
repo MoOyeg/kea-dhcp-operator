@@ -44,6 +44,7 @@ const (
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;create
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;create;update
 // +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,resourceNames=kea-dhcp,verbs=use
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update
 
 // EnsureDefaultNamespace creates the kea-system namespace if it doesn't exist.
@@ -115,8 +116,42 @@ func EnsureSCC(ctx context.Context, c client.Client) error {
 	return nil
 }
 
+// EnsureSCCClusterRole creates the ClusterRole that grants "use" on the
+// kea-dhcp SCC. OpenShift auto-generates these for built-in SCCs but not
+// always for custom ones, so we create it ourselves to be safe.
+func EnsureSCCClusterRole(ctx context.Context, c client.Client) error {
+	cr := &rbacv1.ClusterRole{}
+	if err := c.Get(ctx, client.ObjectKey{Name: sccClusterRole}, cr); err == nil {
+		return nil // already exists
+	}
+
+	cr = &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: sccClusterRole,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kea-dhcp-operator",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups:     []string{"security.openshift.io"},
+				Resources:     []string{"securitycontextconstraints"},
+				ResourceNames: []string{sccName},
+				Verbs:         []string{"use"},
+			},
+		},
+	}
+	if err := c.Create(ctx, cr); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("creating ClusterRole %s: %w", sccClusterRole, err)
+	}
+	return nil
+}
+
 // ensureSCCRoleBinding creates a RoleBinding in the given namespace that grants
-// the service account the kea-dhcp SCC via the auto-generated ClusterRole
+// the service account the kea-dhcp SCC via the ClusterRole
 // system:openshift:scc:kea-dhcp.
 func ensureSCCRoleBinding(ctx context.Context, c client.Client, namespace, crName string) error {
 	saName := resources.ServiceAccountName(crName)

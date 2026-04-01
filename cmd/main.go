@@ -172,7 +172,11 @@ func main() {
 			setupLog.Error(err, "unable to ensure SCC")
 			os.Exit(1)
 		}
-		setupLog.Info("ensured kea-dhcp SCC")
+		if err := controller.EnsureSCCClusterRole(ctx, directClient); err != nil {
+			setupLog.Error(err, "unable to ensure SCC ClusterRole")
+			os.Exit(1)
+		}
+		setupLog.Info("ensured kea-dhcp SCC and ClusterRole")
 	}
 
 	if err = (&controller.KeaDhcp4ServerReconciler{
