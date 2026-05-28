@@ -57,7 +57,7 @@ func (r *DdnsConfigRenderer) RenderJSON() ([]byte, error) {
 		keys := make([]map[string]interface{}, 0, len(s.TSIGKeys))
 		for _, k := range s.TSIGKeys {
 			km := map[string]interface{}{
-				"name":      k.Name,
+				fieldName:   k.Name,
 				"algorithm": k.Algorithm,
 			}
 			setIfNotNil(km, "digest-bits", k.DigestBits)
@@ -110,7 +110,7 @@ func (r *DdnsConfigRenderer) renderDDNSConfig(cfg *keav1alpha1.DDNSConfig) map[s
 		domains := make([]map[string]interface{}, 0, len(cfg.DDNSDomains))
 		for _, d := range cfg.DDNSDomains {
 			dm := map[string]interface{}{
-				"name": d.Name,
+				fieldName: d.Name,
 			}
 			setIfNotEmpty(dm, "key-name", d.KeyName)
 			if len(d.DNSServers) > 0 {

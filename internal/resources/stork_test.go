@@ -24,6 +24,8 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
+const testStorkAgentImage = "test-agent:v1"
+
 func TestResolveStorkParams_NilConfig(t *testing.T) {
 	params, err := ResolveStorkParams(nil, "")
 	if err != nil {
@@ -95,7 +97,7 @@ func TestResolveStorkParams_CustomValues(t *testing.T) {
 
 func TestBuildStorkAgentContainer_PrometheusOnly(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
 	}
@@ -104,14 +106,14 @@ func TestBuildStorkAgentContainer_PrometheusOnly(t *testing.T) {
 	if c.Name != StorkAgentContainerName {
 		t.Errorf("expected container name %q, got %q", StorkAgentContainerName, c.Name)
 	}
-	if c.Image != "test-agent:v1" {
+	if c.Image != testStorkAgentImage {
 		t.Errorf("expected image 'test-agent:v1', got %q", c.Image)
 	}
 
 	// Without ServerURL, should have STORK_AGENT_LISTEN_PROMETHEUS_ONLY
 	found := false
 	for _, e := range c.Env {
-		if e.Name == "STORK_AGENT_LISTEN_PROMETHEUS_ONLY" && e.Value == "true" {
+		if e.Name == "STORK_AGENT_LISTEN_PROMETHEUS_ONLY" && e.Value == valueTrue {
 			found = true
 		}
 		if e.Name == "STORK_AGENT_SERVER_URL" {
@@ -125,7 +127,7 @@ func TestBuildStorkAgentContainer_PrometheusOnly(t *testing.T) {
 
 func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
 		ServerURL:      "http://stork-server:8080",
@@ -144,7 +146,7 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	}
 
 	// Should have non-interactive mode
-	if e, ok := envMap["STORK_AGENT_NON_INTERACTIVE"]; !ok || e.Value != "true" {
+	if e, ok := envMap["STORK_AGENT_NON_INTERACTIVE"]; !ok || e.Value != valueTrue {
 		t.Errorf("expected STORK_AGENT_NON_INTERACTIVE=true, got %+v", e)
 	}
 
@@ -173,7 +175,7 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 
 func TestBuildStorkAgentContainer_VolumeMounts(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
 	}
@@ -195,7 +197,7 @@ func TestBuildStorkAgentContainer_VolumeMounts(t *testing.T) {
 
 func TestBuildStorkAgentContainer_SecurityContext(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
 	}
@@ -204,14 +206,14 @@ func TestBuildStorkAgentContainer_SecurityContext(t *testing.T) {
 	if c.SecurityContext == nil || c.SecurityContext.Capabilities == nil {
 		t.Fatal("expected security context with capabilities")
 	}
-	if len(c.SecurityContext.Capabilities.Drop) != 1 || c.SecurityContext.Capabilities.Drop[0] != "ALL" {
+	if len(c.SecurityContext.Capabilities.Drop) != 1 || c.SecurityContext.Capabilities.Drop[0] != capabilityAll {
 		t.Errorf("expected drop ALL capabilities, got %v", c.SecurityContext.Capabilities.Drop)
 	}
 }
 
 func TestBuildStorkAgentContainer_ExtraEnv(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
 		ExtraEnv: []corev1.EnvVar{
@@ -233,7 +235,7 @@ func TestBuildStorkAgentContainer_ExtraEnv(t *testing.T) {
 
 func TestBuildStorkAgentContainer_Ports(t *testing.T) {
 	sp := &StorkSidecarParams{
-		Image:          "test-agent:v1",
+		Image:          testStorkAgentImage,
 		Port:           8888,
 		PrometheusPort: 9999,
 	}

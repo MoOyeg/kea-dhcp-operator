@@ -29,6 +29,25 @@ const (
 	PartOfValue    = "kea-dhcp"
 )
 
+// Kea component names.
+const (
+	ComponentDhcp4     = "dhcp4"
+	ComponentDhcp6     = "dhcp6"
+	ComponentCtrlAgent = "ctrl-agent"
+	ComponentDdns      = "ddns"
+)
+
+// Shared literal values used across resource builders.
+const (
+	capabilityAll     = "ALL"
+	kindRoute         = "Route"
+	fieldKind         = "kind"
+	fieldName         = "name"
+	portNameStorkProm = "stork-prom"
+	portNameHTTP      = "http"
+	valueTrue         = "true"
+)
+
 // ConfigMapName returns the conventional ConfigMap name for a given CR and component.
 func ConfigMapName(crName, component string) string {
 	return fmt.Sprintf("%s-%s", crName, component)

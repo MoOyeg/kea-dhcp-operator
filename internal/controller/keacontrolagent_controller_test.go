@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,13 +33,13 @@ import (
 
 var _ = Describe("KeaControlAgent Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		const resourceName = "test-kca"
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: testNamespaceDefault, // TODO(user):Modify as needed
 		}
 		keacontrolagent := &keav1alpha1.KeaControlAgent{}
 
@@ -49,7 +50,7 @@ var _ = Describe("KeaControlAgent Controller", func() {
 				resource := &keav1alpha1.KeaControlAgent{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: testNamespaceDefault,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}
@@ -69,8 +70,9 @@ var _ = Describe("KeaControlAgent Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &KeaControlAgentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: record.NewFakeRecorder(100),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

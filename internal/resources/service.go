@@ -119,9 +119,9 @@ func BuildStorkMetricsService(p StorkMetricsServiceParams) *corev1.Service {
 			Selector: labels,
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "stork-prom",
+					Name:       portNameStorkProm,
 					Port:       p.PrometheusPort,
-					TargetPort: intstr.FromString("stork-prom"),
+					TargetPort: intstr.FromString(portNameStorkProm),
 					Protocol:   corev1.ProtocolTCP,
 				},
 				{

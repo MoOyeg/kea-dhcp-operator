@@ -39,6 +39,14 @@ const (
 
 	sccName        = "kea-dhcp"
 	sccClusterRole = "system:openshift:scc:kea-dhcp"
+
+	// secretKeyUsername / secretKeyPassword are the conventional keys used in
+	// database credential Secrets referenced by Kea components.
+	secretKeyUsername = "username"
+	secretKeyPassword = "password"
+
+	// fieldType is the "type" key used in SCC strategy maps.
+	fieldType = "type"
 )
 
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;create
@@ -103,10 +111,10 @@ func EnsureSCC(ctx context.Context, c client.Client) error {
 		"requiredDropCapabilities": []interface{}{"ALL"},
 		"allowedCapabilities":      []interface{}{"NET_RAW", "NET_BIND_SERVICE", "NET_ADMIN"},
 		"defaultAddCapabilities":   []interface{}{},
-		"runAsUser":                map[string]interface{}{"type": "RunAsAny"},
-		"seLinuxContext":           map[string]interface{}{"type": "MustRunAs"},
-		"fsGroup":                  map[string]interface{}{"type": "MustRunAs"},
-		"supplementalGroups":       map[string]interface{}{"type": "RunAsAny"},
+		"runAsUser":                map[string]interface{}{fieldType: "RunAsAny"},
+		"seLinuxContext":           map[string]interface{}{fieldType: "MustRunAs"},
+		"fsGroup":                  map[string]interface{}{fieldType: "MustRunAs"},
+		"supplementalGroups":       map[string]interface{}{fieldType: "RunAsAny"},
 		"volumes":                  []interface{}{"configMap", "downwardAPI", "emptyDir", "projected", "secret"},
 	}
 

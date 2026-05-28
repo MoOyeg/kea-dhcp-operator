@@ -23,13 +23,6 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
-// --- pointer helpers ---
-
-func int32Ptr(v int32) *int32    { return &v }
-func int64Ptr(v int64) *int64    { return &v }
-func boolPtr(v bool) *bool       { return &v }
-func stringPtr(v string) *string { return &v }
-
 // --- ComputeHash tests ---
 
 func TestComputeHash(t *testing.T) {
@@ -125,20 +118,20 @@ func TestSetIfNotNil(t *testing.T) {
 func TestSetIfNotEmpty(t *testing.T) {
 	t.Run("empty string does not set key", func(t *testing.T) {
 		m := map[string]interface{}{}
-		setIfNotEmpty(m, "name", "")
-		if _, ok := m["name"]; ok {
+		setIfNotEmpty(m, fieldName, "")
+		if _, ok := m[fieldName]; ok {
 			t.Fatal("expected key not to be set for empty string")
 		}
 	})
 
 	t.Run("non-empty string sets key", func(t *testing.T) {
 		m := map[string]interface{}{}
-		setIfNotEmpty(m, "name", "kea-dhcp4")
-		got, ok := m["name"]
+		setIfNotEmpty(m, fieldName, testNameDhcp4)
+		got, ok := m[fieldName]
 		if !ok {
 			t.Fatal("expected key to be set")
 		}
-		if got != "kea-dhcp4" {
+		if got != testNameDhcp4 {
 			t.Fatalf("expected 'kea-dhcp4', got %v", got)
 		}
 	})
@@ -166,7 +159,7 @@ func TestRenderDatabaseConfig(t *testing.T) {
 			t.Fatalf("expected type 'memfile', got %v", result["type"])
 		}
 		// no optional fields should be present
-		for _, key := range []string{"name", "host", "port", "user", "password", "persist"} {
+		for _, key := range []string{fieldName, "host", "port", "user", "password", "persist"} {
 			if _, ok := result[key]; ok {
 				t.Fatalf("expected key %q not to be set for minimal config", key)
 			}
@@ -181,7 +174,7 @@ func TestRenderDatabaseConfig(t *testing.T) {
 		retryOnStartup := true
 		db := &keav1alpha1.DatabaseConfig{
 			Type:              keav1alpha1.DatabaseTypeMySQL,
-			Name:              "kea_leases",
+			Name:              testLeaseDBName,
 			Host:              "mysql.example.com",
 			Port:              &port,
 			ConnectTimeout:    &connectTimeout,
@@ -194,11 +187,11 @@ func TestRenderDatabaseConfig(t *testing.T) {
 		if result == nil {
 			t.Fatal("expected non-nil result")
 		}
-		if result["type"] != "mysql" {
+		if result["type"] != dbTypeMySQL {
 			t.Fatalf("expected type 'mysql', got %v", result["type"])
 		}
-		if result["name"] != "kea_leases" {
-			t.Fatalf("expected name 'kea_leases', got %v", result["name"])
+		if result[fieldName] != testLeaseDBName {
+			t.Fatalf("expected name 'kea_leases', got %v", result[fieldName])
 		}
 		if result["host"] != "mysql.example.com" {
 			t.Fatalf("expected host 'mysql.example.com', got %v", result["host"])
@@ -255,8 +248,8 @@ func TestRenderOptionData(t *testing.T) {
 		if len(result) != 1 {
 			t.Fatalf("expected 1 option, got %d", len(result))
 		}
-		if result[0]["name"] != "domain-name-servers" {
-			t.Fatalf("expected name 'domain-name-servers', got %v", result[0]["name"])
+		if result[0][fieldName] != "domain-name-servers" {
+			t.Fatalf("expected name 'domain-name-servers', got %v", result[0][fieldName])
 		}
 		if result[0]["data"] != "8.8.8.8, 8.8.4.4" {
 			t.Fatalf("expected data '8.8.8.8, 8.8.4.4', got %v", result[0]["data"])
@@ -284,7 +277,7 @@ func TestRenderOptionData(t *testing.T) {
 			t.Fatalf("expected always-send true, got %v", result[0]["always-send"])
 		}
 		// name should not be set since it was empty
-		if _, ok := result[0]["name"]; ok {
+		if _, ok := result[0][fieldName]; ok {
 			t.Fatal("expected name not to be set")
 		}
 	})
@@ -378,7 +371,7 @@ func TestRenderLoggers(t *testing.T) {
 		flush := true
 		loggers := []keav1alpha1.LoggerConfig{
 			{
-				Name:       "kea-dhcp4",
+				Name:       testNameDhcp4,
 				Severity:   "DEBUG",
 				DebugLevel: &debugLevel,
 				OutputOptions: []keav1alpha1.LogOutputOption{
@@ -393,8 +386,8 @@ func TestRenderLoggers(t *testing.T) {
 		if len(result) != 1 {
 			t.Fatalf("expected 1 logger, got %d", len(result))
 		}
-		if result[0]["name"] != "kea-dhcp4" {
-			t.Fatalf("expected name 'kea-dhcp4', got %v", result[0]["name"])
+		if result[0][fieldName] != testNameDhcp4 {
+			t.Fatalf("expected name 'kea-dhcp4', got %v", result[0][fieldName])
 		}
 		if result[0]["severity"] != "DEBUG" {
 			t.Fatalf("expected severity 'DEBUG', got %v", result[0]["severity"])
@@ -423,7 +416,7 @@ func TestRenderLoggers(t *testing.T) {
 		loggers := []keav1alpha1.LoggerConfig{
 			{
 				Name:     "kea-dhcp6",
-				Severity: "INFO",
+				Severity: testSeverityInfo,
 				OutputOptions: []keav1alpha1.LogOutputOption{
 					{
 						Output:  "/var/log/kea/kea-dhcp6.log",

@@ -113,7 +113,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	configJSON, err := renderer.RenderJSON()
 	if err != nil {
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-		server.Status.Phase = "Error"
+		server.Status.Phase = keav1alpha1.PhaseError
 		if statusErr := r.Status().Update(ctx, server); statusErr != nil {
 			logger.Error(statusErr, "failed to update status after config render error")
 		}
@@ -154,51 +154,12 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		replicas = &one
 	}
 
-	image := server.Spec.Container.Image
-	hostNetwork := false
-	if server.Spec.HostNetwork != nil {
-		hostNetwork = *server.Spec.HostNetwork
-	}
-
-	var nodeSelector map[string]string
-	var tolerations []corev1.Toleration
-	var affinity *corev1.Affinity
-	var podAnnotations map[string]string
-	if server.Spec.Placement != nil {
-		nodeSelector = server.Spec.Placement.NodeSelector
-		tolerations = server.Spec.Placement.Tolerations
-		affinity = server.Spec.Placement.Affinity
-		podAnnotations = server.Spec.Placement.PodAnnotations
-	}
-
-	var tlsSecretName string
-	if server.Spec.HighAvailability != nil && server.Spec.HighAvailability.TLS != nil {
-		tlsSecretName = server.Spec.HighAvailability.TLS.SecretRef.Name
-	}
+	pp := r.resolveDhcp6PodParams(server)
 
 	// Resolve Stork agent sidecar params (if enabled).
-	var storkAgent *resources.StorkSidecarParams
-	if server.Spec.Stork != nil && server.Spec.Stork.Enabled {
-		storkCfg := server.Spec.Stork.DeepCopy()
-
-		// Auto-discover Stork server if no explicit serverURL is set.
-		if storkCfg.ServerURL == "" {
-			if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
-				storkCfg.ServerURL = info.ServerURL
-				storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
-				logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
-			}
-		}
-
-		var serverToken string
-		if storkCfg.ServerTokenSecretRef != nil {
-			serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
-		}
-		var err error
-		storkAgent, err = resources.ResolveStorkParams(storkCfg, serverToken)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("resolving stork agent params: %w", err)
-		}
+	storkAgent, err := r.resolveDhcp6StorkAgent(ctx, server)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	dp := resources.DeploymentParams{
@@ -208,19 +169,19 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		Command:            resources.DefaultCommandForComponent(component),
 		ConfigFileName:     resources.ConfigFileName(component),
 		ConfigMapName:      resources.ConfigMapName(server.Name, component),
-		Image:              image,
+		Image:              pp.image,
 		ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
 		Replicas:           replicas,
 		Resources:          server.Spec.Container.Resources,
-		HostNetwork:        hostNetwork,
-		NodeSelector:       nodeSelector,
-		Tolerations:        tolerations,
-		Affinity:           affinity,
-		TLSSecretName:      tlsSecretName,
+		HostNetwork:        pp.hostNetwork,
+		NodeSelector:       pp.nodeSelector,
+		Tolerations:        pp.tolerations,
+		Affinity:           pp.affinity,
+		TLSSecretName:      pp.tlsSecretName,
 		ServiceAccountName: resources.ServiceAccountName(server.Name),
 		ConfigHash:         configHash,
 		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
-		PodAnnotations:     podAnnotations,
+		PodAnnotations:     pp.podAnnotations,
 		StorkAgent:         storkAgent,
 		SecretEnvVars:      secretEnvVars,
 	}
@@ -230,56 +191,148 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// 7. Reconcile Service if control socket is HTTP.
-	if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketType == "http" {
-		port := int32(8000)
-		if server.Spec.ControlSocket.SocketPort != nil {
-			port = *server.Spec.ControlSocket.SocketPort
-		}
-		svc := resources.BuildService(resources.ServiceParams{
-			Namespace: server.Namespace,
-			CRName:    server.Name,
-			Component: component,
-			Port:      port,
-			Protocol:  corev1.ProtocolTCP,
-		})
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, svc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling Service: %w", err)
-		}
+	if err := r.reconcileDhcp6ControlService(ctx, server, component); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 8. Reconcile PodMonitor and Stork metrics Service (when stork is enabled).
-	if storkAgent != nil {
-		pm := resources.BuildPodMonitor(server.Namespace, server.Name, component)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, pm); err != nil {
-			logger.Error(err, "failed to reconcile PodMonitor (monitoring.coreos.com CRD may not be installed)")
-		}
-
-		storkSvc := resources.BuildStorkMetricsService(resources.StorkMetricsServiceParams{
-			Namespace:      server.Namespace,
-			CRName:         server.Name,
-			Component:      component,
-			AgentPort:      storkAgent.Port,
-			PrometheusPort: storkAgent.PrometheusPort,
-		})
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, storkSvc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling Stork metrics Service: %w", err)
-		}
-
-		// On OpenShift, create a Route for the Stork Prometheus metrics endpoint.
-		if r.IsOpenShift {
-			route := resources.BuildStorkMetricsRoute(resources.StorkRouteParams{
-				Namespace:      server.Namespace,
-				CRName:         server.Name,
-				Component:      component,
-				PrometheusPort: storkAgent.PrometheusPort,
-			})
-			if err := reconcileRoute(ctx, r.Client, r.Scheme, server, route); err != nil {
-				logger.Error(err, "failed to reconcile Stork metrics Route")
-			}
-		}
+	if err := r.reconcileDhcp6StorkMonitoring(ctx, server, component, storkAgent); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 9. Update status.
+	if err := r.updateDhcp6Status(ctx, server, component, configHash, replicas); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaDhcp6Server")
+	return ctrl.Result{}, nil
+}
+
+// dhcp6PodParams holds resolved pod-level parameters for the Deployment builder.
+type dhcp6PodParams struct {
+	image          string
+	hostNetwork    bool
+	nodeSelector   map[string]string
+	tolerations    []corev1.Toleration
+	affinity       *corev1.Affinity
+	podAnnotations map[string]string
+	tlsSecretName  string
+}
+
+// resolveDhcp6PodParams extracts common pod parameters from the CR spec.
+func (r *KeaDhcp6ServerReconciler) resolveDhcp6PodParams(server *keav1alpha1.KeaDhcp6Server) dhcp6PodParams {
+	pp := dhcp6PodParams{
+		image: server.Spec.Container.Image,
+	}
+	if server.Spec.HostNetwork != nil {
+		pp.hostNetwork = *server.Spec.HostNetwork
+	}
+	if server.Spec.Placement != nil {
+		pp.nodeSelector = server.Spec.Placement.NodeSelector
+		pp.tolerations = server.Spec.Placement.Tolerations
+		pp.affinity = server.Spec.Placement.Affinity
+		pp.podAnnotations = server.Spec.Placement.PodAnnotations
+	}
+	if server.Spec.HighAvailability != nil && server.Spec.HighAvailability.TLS != nil {
+		pp.tlsSecretName = server.Spec.HighAvailability.TLS.SecretRef.Name
+	}
+	return pp
+}
+
+// resolveDhcp6StorkAgent resolves the Stork agent sidecar params (if enabled),
+// auto-discovering the Stork server when no explicit serverURL is configured.
+func (r *KeaDhcp6ServerReconciler) resolveDhcp6StorkAgent(ctx context.Context, server *keav1alpha1.KeaDhcp6Server) (*resources.StorkSidecarParams, error) {
+	if server.Spec.Stork == nil || !server.Spec.Stork.Enabled {
+		return nil, nil
+	}
+	logger := log.FromContext(ctx)
+	storkCfg := server.Spec.Stork.DeepCopy()
+
+	// Auto-discover Stork server if no explicit serverURL is set.
+	if storkCfg.ServerURL == "" {
+		if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
+			storkCfg.ServerURL = info.ServerURL
+			storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
+			logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
+		}
+	}
+
+	var serverToken string
+	if storkCfg.ServerTokenSecretRef != nil {
+		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
+	}
+	storkAgent, err := resources.ResolveStorkParams(storkCfg, serverToken)
+	if err != nil {
+		return nil, fmt.Errorf("resolving stork agent params: %w", err)
+	}
+	return storkAgent, nil
+}
+
+// reconcileDhcp6ControlService reconciles the control-socket Service when the
+// control socket uses HTTP.
+func (r *KeaDhcp6ServerReconciler) reconcileDhcp6ControlService(ctx context.Context, server *keav1alpha1.KeaDhcp6Server, component string) error {
+	if server.Spec.ControlSocket == nil || server.Spec.ControlSocket.SocketType != "http" {
+		return nil
+	}
+	port := int32(8000)
+	if server.Spec.ControlSocket.SocketPort != nil {
+		port = *server.Spec.ControlSocket.SocketPort
+	}
+	svc := resources.BuildService(resources.ServiceParams{
+		Namespace: server.Namespace,
+		CRName:    server.Name,
+		Component: component,
+		Port:      port,
+		Protocol:  corev1.ProtocolTCP,
+	})
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, svc); err != nil {
+		return fmt.Errorf("reconciling Service: %w", err)
+	}
+	return nil
+}
+
+// reconcileDhcp6StorkMonitoring reconciles the PodMonitor, Stork metrics Service
+// and (on OpenShift) the metrics Route when the Stork agent is enabled.
+func (r *KeaDhcp6ServerReconciler) reconcileDhcp6StorkMonitoring(ctx context.Context, server *keav1alpha1.KeaDhcp6Server, component string, storkAgent *resources.StorkSidecarParams) error {
+	if storkAgent == nil {
+		return nil
+	}
+	logger := log.FromContext(ctx)
+
+	pm := resources.BuildPodMonitor(server.Namespace, server.Name, component)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, pm); err != nil {
+		logger.Error(err, "failed to reconcile PodMonitor (monitoring.coreos.com CRD may not be installed)")
+	}
+
+	storkSvc := resources.BuildStorkMetricsService(resources.StorkMetricsServiceParams{
+		Namespace:      server.Namespace,
+		CRName:         server.Name,
+		Component:      component,
+		AgentPort:      storkAgent.Port,
+		PrometheusPort: storkAgent.PrometheusPort,
+	})
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, storkSvc); err != nil {
+		return fmt.Errorf("reconciling Stork metrics Service: %w", err)
+	}
+
+	// On OpenShift, create a Route for the Stork Prometheus metrics endpoint.
+	if r.IsOpenShift {
+		route := resources.BuildStorkMetricsRoute(resources.StorkRouteParams{
+			Namespace:      server.Namespace,
+			CRName:         server.Name,
+			Component:      component,
+			PrometheusPort: storkAgent.PrometheusPort,
+		})
+		if err := reconcileRoute(ctx, r.Client, r.Scheme, server, route); err != nil {
+			logger.Error(err, "failed to reconcile Stork metrics Route")
+		}
+	}
+	return nil
+}
+
+// updateDhcp6Status updates the CR status (replicas, hash, conditions, phase).
+func (r *KeaDhcp6ServerReconciler) updateDhcp6Status(ctx context.Context, server *keav1alpha1.KeaDhcp6Server, component, configHash string, replicas *int32) error {
 	currentDeploy := &appsv1.Deployment{}
 	var readyReplicas int32
 	deployKey := types.NamespacedName{
@@ -296,22 +349,20 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	server.Status.ObservedGeneration = server.Generation
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
-		server.Status.Phase = "Running"
+		server.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "DeploymentReady", "All replicas are ready")
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "Deployment is complete")
 	} else {
-		server.Status.Phase = "Progressing"
+		server.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "DeploymentProgressing",
 			fmt.Sprintf("%d/%d replicas ready", readyReplicas, *replicas))
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "DeploymentProgressing", "Waiting for replicas")
 	}
 
 	if err := r.Status().Update(ctx, server); err != nil {
-		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
+		return fmt.Errorf("updating status: %w", err)
 	}
-
-	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaDhcp6Server")
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

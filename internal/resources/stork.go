@@ -91,7 +91,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 	if sp.ServerURL != "" {
 		env = append(env,
 			corev1.EnvVar{Name: "STORK_AGENT_SERVER_URL", Value: sp.ServerURL},
-			corev1.EnvVar{Name: "STORK_AGENT_NON_INTERACTIVE", Value: "true"},
+			corev1.EnvVar{Name: "STORK_AGENT_NON_INTERACTIVE", Value: valueTrue},
 		)
 		// Always register with the pod IP so the Stork server can reach the agent
 		// over the cluster network.
@@ -109,7 +109,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 	} else {
 		// Without a Stork server, run in Prometheus-only mode to avoid
 		// requiring gRPC TLS certificates.
-		env = append(env, corev1.EnvVar{Name: "STORK_AGENT_LISTEN_PROMETHEUS_ONLY", Value: "true"})
+		env = append(env, corev1.EnvVar{Name: "STORK_AGENT_LISTEN_PROMETHEUS_ONLY", Value: valueTrue})
 	}
 
 	env = append(env, sp.ExtraEnv...)
@@ -127,7 +127,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 				Protocol:      corev1.ProtocolTCP,
 			},
 			{
-				Name:          "stork-prom",
+				Name:          portNameStorkProm,
 				ContainerPort: sp.PrometheusPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
@@ -145,7 +145,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 		},
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
+				Drop: []corev1.Capability{capabilityAll},
 			},
 		},
 	}

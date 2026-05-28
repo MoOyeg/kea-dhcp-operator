@@ -532,6 +532,22 @@ const (
 	ConditionTypeProgressing = "Progressing"
 )
 
+const (
+	// ConditionStatusTrue is the "True" status value for a condition.
+	ConditionStatusTrue = "True"
+	// ConditionStatusFalse is the "False" status value for a condition.
+	ConditionStatusFalse = "False"
+)
+
+const (
+	// PhaseRunning indicates the component is running and healthy.
+	PhaseRunning = "Running"
+	// PhaseProgressing indicates the component is still converging.
+	PhaseProgressing = "Progressing"
+	// PhaseError indicates the component encountered an error.
+	PhaseError = "Error"
+)
+
 // ========== Common Status ==========
 
 // ComponentStatus defines observed state common to all Kea components.

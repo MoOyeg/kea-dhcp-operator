@@ -33,19 +33,19 @@ func TestRenderHAHooks(t *testing.T) {
 	t.Run("produces 2 hooks", func(t *testing.T) {
 		autoFailover := true
 		ha := &keav1alpha1.HAConfig{
-			ThisServerName: "server1",
-			Mode:           "load-balancing",
+			ThisServerName: testServerName1,
+			Mode:           testHAModeLB,
 			Peers: []keav1alpha1.HAPeer{
 				{
-					Name:         "server1",
-					URL:          "http://server1:8000/",
-					Role:         "primary",
+					Name:         testServerName1,
+					URL:          testServer1URL,
+					Role:         testRolePrimary,
 					AutoFailover: &autoFailover,
 				},
 				{
-					Name:         "server2",
-					URL:          "http://server2:8000/",
-					Role:         "standby",
+					Name:         testServerName2,
+					URL:          testServer2URL,
+					Role:         testRoleStandby,
 					AutoFailover: &autoFailover,
 				},
 			},
@@ -56,7 +56,7 @@ func TestRenderHAHooks(t *testing.T) {
 		}
 
 		// First hook is lease_cmds
-		if result[0]["library"] != "/usr/lib/kea/hooks/libdhcp_lease_cmds.so" {
+		if result[0]["library"] != leaseCmdsHookLib {
 			t.Errorf("expected first hook library to be lease_cmds, got %v", result[0]["library"])
 		}
 		// lease_cmds should not have parameters
@@ -65,7 +65,7 @@ func TestRenderHAHooks(t *testing.T) {
 		}
 
 		// Second hook is ha
-		if result[1]["library"] != "/usr/lib/kea/hooks/libdhcp_ha.so" {
+		if result[1]["library"] != haHookLib {
 			t.Errorf("expected second hook library to be ha, got %v", result[1]["library"])
 		}
 		// ha hook must have parameters
@@ -80,7 +80,7 @@ func TestRenderHAHooks(t *testing.T) {
 		if len(haArr) != 1 {
 			t.Fatalf("expected 1 HA config, got %d", len(haArr))
 		}
-		if haArr[0]["this-server-name"] != "server1" {
+		if haArr[0]["this-server-name"] != testServerName1 {
 			t.Errorf("expected this-server-name 'server1', got %v", haArr[0]["this-server-name"])
 		}
 	})
@@ -102,8 +102,8 @@ func TestRenderHAHooksFullConfig(t *testing.T) {
 	httpListenerThreads := int32(4)
 
 	ha := &keav1alpha1.HAConfig{
-		ThisServerName:      "primary-server",
-		Mode:                "hot-standby",
+		ThisServerName:      testPrimaryServer,
+		Mode:                testHAModeHotStandby,
 		HeartbeatDelay:      &heartbeat,
 		MaxResponseDelay:    &maxResponse,
 		MaxAckDelay:         &maxAck,
@@ -115,15 +115,15 @@ func TestRenderHAHooksFullConfig(t *testing.T) {
 		DelayedUpdatesLimit: &delayedUpdatesLimit,
 		Peers: []keav1alpha1.HAPeer{
 			{
-				Name:         "primary-server",
+				Name:         testPrimaryServer,
 				URL:          "http://primary:8000/",
-				Role:         "primary",
+				Role:         testRolePrimary,
 				AutoFailover: &autoFailover,
 			},
 			{
 				Name:         "standby-server",
 				URL:          "http://standby:8000/",
-				Role:         "standby",
+				Role:         testRoleStandby,
 				AutoFailover: &autoFailover,
 			},
 		},
@@ -145,10 +145,10 @@ func TestRenderHAHooksFullConfig(t *testing.T) {
 	haConfig := haArr[0]
 
 	// Verify all HA parameters are rendered
-	if haConfig["this-server-name"] != "primary-server" {
+	if haConfig["this-server-name"] != testPrimaryServer {
 		t.Errorf("expected this-server-name 'primary-server', got %v", haConfig["this-server-name"])
 	}
-	if haConfig["mode"] != "hot-standby" {
+	if haConfig["mode"] != testHAModeHotStandby {
 		t.Errorf("expected mode 'hot-standby', got %v", haConfig["mode"])
 	}
 	if haConfig["heartbeat-delay"] != int32(10000) {
@@ -187,22 +187,22 @@ func TestRenderHAHooksFullConfig(t *testing.T) {
 	if len(peers) != 2 {
 		t.Fatalf("expected 2 peers, got %d", len(peers))
 	}
-	if peers[0]["name"] != "primary-server" {
-		t.Errorf("expected first peer name 'primary-server', got %v", peers[0]["name"])
+	if peers[0][fieldName] != testPrimaryServer {
+		t.Errorf("expected first peer name 'primary-server', got %v", peers[0][fieldName])
 	}
 	if peers[0]["url"] != "http://primary:8000/" {
 		t.Errorf("expected first peer url 'http://primary:8000/', got %v", peers[0]["url"])
 	}
-	if peers[0]["role"] != "primary" {
+	if peers[0]["role"] != testRolePrimary {
 		t.Errorf("expected first peer role 'primary', got %v", peers[0]["role"])
 	}
 	if peers[0]["auto-failover"] != true {
 		t.Errorf("expected auto-failover true, got %v", peers[0]["auto-failover"])
 	}
-	if peers[1]["name"] != "standby-server" {
-		t.Errorf("expected second peer name 'standby-server', got %v", peers[1]["name"])
+	if peers[1][fieldName] != "standby-server" {
+		t.Errorf("expected second peer name 'standby-server', got %v", peers[1][fieldName])
 	}
-	if peers[1]["role"] != "standby" {
+	if peers[1]["role"] != testRoleStandby {
 		t.Errorf("expected second peer role 'standby', got %v", peers[1]["role"])
 	}
 

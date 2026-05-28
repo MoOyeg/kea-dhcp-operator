@@ -62,9 +62,9 @@ func renderHAHooks(ha *keav1alpha1.HAConfig, serverNameOverride string, haListen
 		peers := make([]map[string]interface{}, 0, len(ha.Peers))
 		for _, p := range ha.Peers {
 			pm := map[string]interface{}{
-				"name": p.Name,
-				"url":  p.URL,
-				"role": p.Role,
+				fieldName: p.Name,
+				"url":     p.URL,
+				"role":    p.Role,
 			}
 			setIfNotNil(pm, "auto-failover", p.AutoFailover)
 			peers = append(peers, pm)
@@ -86,17 +86,17 @@ func renderHAHooks(ha *keav1alpha1.HAConfig, serverNameOverride string, haListen
 	// Configure dedicated HTTP listener for HA peer communication when using HTTP control socket.
 	if haListenerPort > 0 {
 		haConfig["http-dedicated-listener"] = true
-		haConfig["http-listener-address"] = "0.0.0.0"
+		haConfig["http-listener-address"] = listenAnyIP4
 		haConfig["http-listener-port"] = haListenerPort
 	}
 
 	// Return two hook entries: lease_cmds first, then HA
 	return []map[string]interface{}{
 		{
-			"library": leaseCmdsHookLib,
+			fieldLibrary: leaseCmdsHookLib,
 		},
 		{
-			"library": haHookLib,
+			fieldLibrary: haHookLib,
 			"parameters": map[string]interface{}{
 				"high-availability": []map[string]interface{}{haConfig},
 			},

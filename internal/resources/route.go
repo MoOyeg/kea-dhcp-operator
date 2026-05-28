@@ -25,7 +25,7 @@ import (
 var RouteGVK = schema.GroupVersionKind{
 	Group:   "route.openshift.io",
 	Version: "v1",
-	Kind:    "Route",
+	Kind:    kindRoute,
 }
 
 // StorkRouteParams holds parameters for building a Stork metrics Route.
@@ -54,19 +54,19 @@ func BuildStorkMetricsRoute(p StorkRouteParams) *unstructured.Unstructured {
 	route.SetGroupVersionKind(RouteGVK)
 	route.Object = map[string]interface{}{
 		"apiVersion": "route.openshift.io/v1",
-		"kind":       "Route",
+		fieldKind:    kindRoute,
 		"metadata": map[string]interface{}{
-			"name":      routeName,
+			fieldName:   routeName,
 			"namespace": p.Namespace,
 			"labels":    labelsIface,
 		},
 		"spec": map[string]interface{}{
 			"to": map[string]interface{}{
-				"kind": "Service",
-				"name": svcName,
+				fieldKind: "Service",
+				fieldName: svcName,
 			},
 			"port": map[string]interface{}{
-				"targetPort": "stork-prom",
+				"targetPort": portNameStorkProm,
 			},
 			"tls": map[string]interface{}{
 				"termination": "edge",

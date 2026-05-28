@@ -25,6 +25,16 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
+// Common Kea JSON field keys and literal values shared across renderers.
+const (
+	fieldName        = "name"
+	fieldLibrary     = "library"
+	fieldIPAddresses = "ip-addresses"
+
+	dbTypeMySQL  = "mysql"
+	listenAnyIP4 = "0.0.0.0"
+)
+
 // ConfigRenderer defines the interface for rendering Kea JSON configuration.
 type ConfigRenderer interface {
 	RenderJSON() ([]byte, error)
@@ -43,7 +53,7 @@ func setIfNotNil(m map[string]interface{}, key string, val interface{}) {
 		return
 	}
 	v := reflect.ValueOf(val)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
 		}
@@ -88,9 +98,9 @@ func renderOptionDef(defs []keav1alpha1.OptionDef) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(defs))
 	for _, d := range defs {
 		dm := map[string]interface{}{
-			"name": d.Name,
-			"code": d.Code,
-			"type": d.Type,
+			fieldName: d.Name,
+			"code":    d.Code,
+			"type":    d.Type,
 		}
 		setIfNotNil(dm, "array", d.Array)
 		setIfNotEmpty(dm, "record-types", d.RecordTypes)
@@ -109,7 +119,7 @@ func renderClientClasses(classes []keav1alpha1.ClientClass) []map[string]interfa
 	result := make([]map[string]interface{}, 0, len(classes))
 	for _, c := range classes {
 		cm := map[string]interface{}{
-			"name": c.Name,
+			fieldName: c.Name,
 		}
 		setIfNotEmpty(cm, "test", c.Test)
 		if opts := renderOptionData(c.OptionData); opts != nil {
@@ -167,7 +177,7 @@ func renderHooksLibraries(hooks []keav1alpha1.HookLibrary) []map[string]interfac
 	result := make([]map[string]interface{}, 0, len(hooks))
 	for _, h := range hooks {
 		hm := map[string]interface{}{
-			"library": h.Library,
+			fieldLibrary: h.Library,
 		}
 		if h.Parameters != nil && h.Parameters.Raw != nil {
 			var params interface{}
@@ -189,10 +199,10 @@ func renderDBHook(db *keav1alpha1.DatabaseConfig) map[string]interface{} {
 		return nil
 	}
 	switch db.Type {
-	case "mysql":
-		return map[string]interface{}{"library": mysqlHookLib}
+	case dbTypeMySQL:
+		return map[string]interface{}{fieldLibrary: mysqlHookLib}
 	case "postgresql":
-		return map[string]interface{}{"library": pgsqlHookLib}
+		return map[string]interface{}{fieldLibrary: pgsqlHookLib}
 	default:
 		return nil
 	}
@@ -220,7 +230,7 @@ func renderLoggers(loggers []keav1alpha1.LoggerConfig) []map[string]interface{} 
 	result := make([]map[string]interface{}, 0, len(loggers))
 	for _, l := range loggers {
 		lm := map[string]interface{}{
-			"name": l.Name,
+			fieldName: l.Name,
 		}
 		setIfNotEmpty(lm, "severity", l.Severity)
 		setIfNotNil(lm, "debuglevel", l.DebugLevel)

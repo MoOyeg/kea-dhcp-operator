@@ -236,7 +236,7 @@ func (r *Dhcp6ConfigRenderer) renderSubnet6(sub keav1alpha1.Subnet6) map[string]
 	setIfNotEmpty(sm, "interface-id", sub.InterfaceID)
 	if sub.Relay != nil && len(sub.Relay.IPAddresses) > 0 {
 		sm["relay"] = map[string]interface{}{
-			"ip-addresses": sub.Relay.IPAddresses,
+			fieldIPAddresses: sub.Relay.IPAddresses,
 		}
 	}
 	setIfNotNil(sm, "preferred-lifetime", sub.PreferredLifetime)
@@ -289,7 +289,7 @@ func (r *Dhcp6ConfigRenderer) renderSharedNetworks6() []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(r.Spec.SharedNetworks))
 	for _, sn := range r.Spec.SharedNetworks {
 		snm := map[string]interface{}{
-			"name": sn.Name,
+			fieldName: sn.Name,
 		}
 		if len(sn.Subnet6) > 0 {
 			subs := make([]map[string]interface{}, 0, len(sn.Subnet6))
@@ -305,7 +305,7 @@ func (r *Dhcp6ConfigRenderer) renderSharedNetworks6() []map[string]interface{} {
 		}
 		if sn.Relay != nil && len(sn.Relay.IPAddresses) > 0 {
 			snm["relay"] = map[string]interface{}{
-				"ip-addresses": sn.Relay.IPAddresses,
+				fieldIPAddresses: sn.Relay.IPAddresses,
 			}
 		}
 		setIfNotEmpty(snm, "client-class", sn.ClientClass)

@@ -26,7 +26,7 @@ import (
 func TestSetCondition(t *testing.T) {
 	t.Run("appends new condition", func(t *testing.T) {
 		var conditions []keav1alpha1.ConditionStatus
-		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "Ready", "All good")
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, keav1alpha1.ConditionStatusTrue, "Ready", "All good")
 
 		if len(conditions) != 1 {
 			t.Fatalf("expected 1 condition, got %d", len(conditions))
@@ -34,7 +34,7 @@ func TestSetCondition(t *testing.T) {
 		if conditions[0].Type != keav1alpha1.ConditionTypeReady {
 			t.Errorf("expected type %q, got %q", keav1alpha1.ConditionTypeReady, conditions[0].Type)
 		}
-		if conditions[0].Status != "True" {
+		if conditions[0].Status != keav1alpha1.ConditionStatusTrue {
 			t.Errorf("expected status True, got %q", conditions[0].Status)
 		}
 		if conditions[0].LastTransitionTime == "" {
@@ -44,9 +44,9 @@ func TestSetCondition(t *testing.T) {
 
 	t.Run("updates existing condition same status", func(t *testing.T) {
 		conditions := []keav1alpha1.ConditionStatus{
-			{Type: keav1alpha1.ConditionTypeReady, Status: "True", Reason: "OldReason", LastTransitionTime: "2026-01-01T00:00:00Z"},
+			{Type: keav1alpha1.ConditionTypeReady, Status: keav1alpha1.ConditionStatusTrue, Reason: "OldReason", LastTransitionTime: testTimestamp},
 		}
-		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "NewReason", "updated msg")
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, keav1alpha1.ConditionStatusTrue, "NewReason", "updated msg")
 
 		if len(conditions) != 1 {
 			t.Fatalf("expected 1 condition, got %d", len(conditions))
@@ -55,29 +55,29 @@ func TestSetCondition(t *testing.T) {
 			t.Errorf("expected reason NewReason, got %q", conditions[0].Reason)
 		}
 		// LastTransitionTime should NOT change when status stays the same.
-		if conditions[0].LastTransitionTime != "2026-01-01T00:00:00Z" {
+		if conditions[0].LastTransitionTime != testTimestamp {
 			t.Errorf("expected LastTransitionTime unchanged, got %q", conditions[0].LastTransitionTime)
 		}
 	})
 
 	t.Run("updates existing condition different status", func(t *testing.T) {
 		conditions := []keav1alpha1.ConditionStatus{
-			{Type: keav1alpha1.ConditionTypeReady, Status: "False", Reason: "NotReady", LastTransitionTime: "2026-01-01T00:00:00Z"},
+			{Type: keav1alpha1.ConditionTypeReady, Status: "False", Reason: "NotReady", LastTransitionTime: testTimestamp},
 		}
-		setCondition(&conditions, keav1alpha1.ConditionTypeReady, "True", "Ready", "now ready")
+		setCondition(&conditions, keav1alpha1.ConditionTypeReady, keav1alpha1.ConditionStatusTrue, "Ready", "now ready")
 
-		if conditions[0].Status != "True" {
+		if conditions[0].Status != keav1alpha1.ConditionStatusTrue {
 			t.Errorf("expected status True, got %q", conditions[0].Status)
 		}
 		// LastTransitionTime SHOULD change when status transitions.
-		if conditions[0].LastTransitionTime == "2026-01-01T00:00:00Z" {
+		if conditions[0].LastTransitionTime == testTimestamp {
 			t.Error("expected LastTransitionTime to be updated on status transition")
 		}
 	})
 
 	t.Run("appends second condition type", func(t *testing.T) {
 		conditions := []keav1alpha1.ConditionStatus{
-			{Type: keav1alpha1.ConditionTypeReady, Status: "True", Reason: "Ready"},
+			{Type: keav1alpha1.ConditionTypeReady, Status: keav1alpha1.ConditionStatusTrue, Reason: "Ready"},
 		}
 		setCondition(&conditions, keav1alpha1.ConditionTypeProgressing, "False", "Done", "done")
 
@@ -108,7 +108,7 @@ func TestDbCredentialEnvVars(t *testing.T) {
 
 	t.Run("db with credentialsSecretRef generates env vars", func(t *testing.T) {
 		db := &keav1alpha1.DatabaseConfig{
-			Type: keav1alpha1.DatabaseTypeMySQL,
+			Type:                 keav1alpha1.DatabaseTypeMySQL,
 			CredentialsSecretRef: &corev1.LocalObjectReference{Name: "my-secret"},
 		}
 		envs, user, pass := dbCredentialEnvVars("KEA_DB", db)
@@ -143,10 +143,10 @@ func TestFillPeerURLs(t *testing.T) {
 
 	t.Run("fills empty URLs using naming convention", func(t *testing.T) {
 		ha := &keav1alpha1.HAConfig{
-			ThisServerName: "server1",
+			ThisServerName: testServerName1,
 			Mode:           "load-balancing",
 			Peers: []keav1alpha1.HAPeer{
-				{Name: "server1", Role: "primary"},
+				{Name: testServerName1, Role: testRolePrimary},
 				{Name: "server2", Role: "secondary"},
 			},
 		}
@@ -165,10 +165,10 @@ func TestFillPeerURLs(t *testing.T) {
 
 	t.Run("does not overwrite explicit URLs", func(t *testing.T) {
 		ha := &keav1alpha1.HAConfig{
-			ThisServerName: "server1",
+			ThisServerName: testServerName1,
 			Mode:           "load-balancing",
 			Peers: []keav1alpha1.HAPeer{
-				{Name: "server1", URL: "http://custom:9000/", Role: "primary"},
+				{Name: testServerName1, URL: "http://custom:9000/", Role: testRolePrimary},
 				{Name: "server2", Role: "secondary"},
 			},
 		}
@@ -185,9 +185,9 @@ func TestFillPeerURLs(t *testing.T) {
 
 	t.Run("uses custom port", func(t *testing.T) {
 		ha := &keav1alpha1.HAConfig{
-			ThisServerName: "server1",
+			ThisServerName: testServerName1,
 			Peers: []keav1alpha1.HAPeer{
-				{Name: "server1", Role: "primary"},
+				{Name: testServerName1, Role: testRolePrimary},
 			},
 		}
 		fillPeerURLs(ha, "ns", "myserver", "dhcp4", 9090)

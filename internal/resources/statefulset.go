@@ -216,7 +216,7 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 	}
 	securityContext := &corev1.SecurityContext{
 		Capabilities: &corev1.Capabilities{
-			Drop: []corev1.Capability{"ALL"},
+			Drop: []corev1.Capability{capabilityAll},
 			Add:  addCaps,
 		},
 	}
@@ -286,7 +286,7 @@ fi`, configHostname, stsName, configHostname, configDst, configHostname,
 		VolumeMounts: initVolumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
+				Drop: []corev1.Capability{capabilityAll},
 			},
 		},
 	}

@@ -35,7 +35,7 @@ func TestComputeNADAddresses(t *testing.T) {
 		},
 		{
 			name:     "zero replicas returns nil",
-			subnet:   "192.168.50.0/24",
+			subnet:   testSubnet,
 			replicas: 0,
 			expected: nil,
 		},
@@ -47,13 +47,13 @@ func TestComputeNADAddresses(t *testing.T) {
 		},
 		{
 			name:     "single replica",
-			subnet:   "192.168.50.0/24",
+			subnet:   testSubnet,
 			replicas: 1,
 			expected: []string{"192.168.50.2"},
 		},
 		{
 			name:     "two replicas",
-			subnet:   "192.168.50.0/24",
+			subnet:   testSubnet,
 			replicas: 2,
 			expected: []string{"192.168.50.2", "192.168.50.3"},
 		},

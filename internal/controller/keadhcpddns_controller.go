@@ -89,7 +89,7 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	configJSON, err := renderer.RenderJSON()
 	if err != nil {
 		setCondition(&ddns.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-		ddns.Status.Phase = "Error"
+		ddns.Status.Phase = keav1alpha1.PhaseError
 		if statusErr := r.Status().Update(ctx, ddns); statusErr != nil {
 			logger.Error(statusErr, "failed to update status after config render error")
 		}
@@ -200,11 +200,11 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	ddns.Status.ObservedGeneration = ddns.Generation
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
-		ddns.Status.Phase = "Running"
+		ddns.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&ddns.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "DeploymentReady", "All replicas are ready")
 		setCondition(&ddns.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "Deployment is complete")
 	} else {
-		ddns.Status.Phase = "Progressing"
+		ddns.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&ddns.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "DeploymentProgressing",
 			fmt.Sprintf("%d/%d replicas ready", readyReplicas, *replicas))
 		setCondition(&ddns.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "DeploymentProgressing", "Waiting for replicas")

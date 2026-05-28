@@ -92,7 +92,7 @@ func BuildStorkServerDeployment(p StorkServerParams) *appsv1.Deployment {
 	}
 
 	if p.EnableMetrics {
-		env = append(env, corev1.EnvVar{Name: "STORK_SERVER_ENABLE_METRICS", Value: "true"})
+		env = append(env, corev1.EnvVar{Name: "STORK_SERVER_ENABLE_METRICS", Value: valueTrue})
 	}
 
 	// Set the server agent token from the token Secret so agents can register.
@@ -123,8 +123,8 @@ func BuildStorkServerDeployment(p StorkServerParams) *appsv1.Deployment {
 	}
 
 	// Build init container for DB migration.
-	initEnv := make([]corev1.EnvVar, len(env))
-	copy(initEnv, env)
+	initEnv := make([]corev1.EnvVar, 0, len(env)+len(p.SecretEnvVars))
+	initEnv = append(initEnv, env...)
 	initEnv = append(initEnv, p.SecretEnvVars...)
 
 	migrationScript := `set -e
@@ -152,7 +152,7 @@ echo "Database migration complete"
 		Env:             initEnv,
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
+				Drop: []corev1.Capability{capabilityAll},
 			},
 		},
 	}
@@ -252,7 +252,7 @@ wait $SERVER_PID
 							Env:             env,
 							Ports: []corev1.ContainerPort{
 								{
-									Name:          "http",
+									Name:          portNameHTTP,
 									ContainerPort: port,
 									Protocol:      corev1.ProtocolTCP,
 								},
@@ -261,7 +261,7 @@ wait $SERVER_PID
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/api/version",
-										Port: intstr.FromString("http"),
+										Port: intstr.FromString(portNameHTTP),
 									},
 								},
 								InitialDelaySeconds: 10,
@@ -271,7 +271,7 @@ wait $SERVER_PID
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/api/version",
-										Port: intstr.FromString("http"),
+										Port: intstr.FromString(portNameHTTP),
 									},
 								},
 								InitialDelaySeconds: 30,
@@ -279,7 +279,7 @@ wait $SERVER_PID
 							},
 							SecurityContext: &corev1.SecurityContext{
 								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
+									Drop: []corev1.Capability{capabilityAll},
 								},
 							},
 						},
@@ -313,9 +313,9 @@ func BuildStorkServerService(namespace, crName string, port int32) *corev1.Servi
 			Selector: labels,
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "http",
+					Name:       portNameHTTP,
 					Port:       port,
-					TargetPort: intstr.FromString("http"),
+					TargetPort: intstr.FromString(portNameHTTP),
 					Protocol:   corev1.ProtocolTCP,
 				},
 			},
@@ -371,23 +371,23 @@ func BuildStorkServerRoute(namespace, crName string) *unstructured.Unstructured 
 	route.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "route.openshift.io",
 		Version: "v1",
-		Kind:    "Route",
+		Kind:    kindRoute,
 	})
 	route.Object = map[string]interface{}{
 		"apiVersion": "route.openshift.io/v1",
-		"kind":       "Route",
+		fieldKind:    kindRoute,
 		"metadata": map[string]interface{}{
-			"name":      routeName,
+			fieldName:   routeName,
 			"namespace": namespace,
 			"labels":    labelsIface,
 		},
 		"spec": map[string]interface{}{
 			"to": map[string]interface{}{
-				"kind": "Service",
-				"name": svcName,
+				fieldKind: "Service",
+				fieldName: svcName,
 			},
 			"port": map[string]interface{}{
-				"targetPort": "http",
+				"targetPort": portNameHTTP,
 			},
 			"tls": map[string]interface{}{
 				"termination": "edge",

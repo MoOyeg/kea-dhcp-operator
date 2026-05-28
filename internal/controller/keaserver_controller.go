@@ -144,11 +144,11 @@ func (r *KeaServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		server.Status.Phase = "Pending"
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "NoComponents", "No components configured")
 	} else if allReady {
-		server.Status.Phase = "Running"
+		server.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "AllComponentsReady", "All configured components are ready")
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "All components deployed")
 	} else {
-		server.Status.Phase = "Progressing"
+		server.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "ComponentsProgressing", "Some components are not yet ready")
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "ComponentsProgressing", "Waiting for components")
 	}
@@ -326,13 +326,13 @@ func (r *KeaServerReconciler) isChildReady(ctx context.Context, namespace, name 
 		return false
 	}
 
-	if phase != "Running" {
+	if phase != keav1alpha1.PhaseRunning {
 		return false
 	}
 
 	for _, c := range conditions {
 		if c.Type == keav1alpha1.ConditionTypeReady {
-			return c.Status == "True"
+			return c.Status == keav1alpha1.ConditionStatusTrue
 		}
 	}
 

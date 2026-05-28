@@ -26,7 +26,7 @@ import (
 func TestDhcp6MinimalConfig(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 	}
 	renderer := NewDhcp6ConfigRenderer(spec)
@@ -55,12 +55,12 @@ func TestDhcp6MinimalConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("expected 'interfaces' to be an array")
 	}
-	if len(ifaces) != 1 || ifaces[0] != "eth0" {
+	if len(ifaces) != 1 || ifaces[0] != testInterfaceEth0 {
 		t.Fatalf("expected interfaces ['eth0'], got %v", ifaces)
 	}
 
 	// Should not have optional sections
-	for _, key := range []string{"subnet6", "shared-networks", "lease-database", "hooks-libraries", "preferred-lifetime"} {
+	for _, key := range []string{"subnet6", "shared-networks", testLeaseDatabaseK, testHooksLibrariesK, "preferred-lifetime"} {
 		if _, ok := dhcp6[key]; ok {
 			t.Fatalf("expected key %q not to be set in minimal config", key)
 		}
@@ -71,7 +71,7 @@ func TestDhcp6WithPDPools(t *testing.T) {
 	excludedPrefixLen := int32(64)
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		Subnet6: []keav1alpha1.Subnet6{
 			{
@@ -159,14 +159,14 @@ func TestDhcp6FullConfig(t *testing.T) {
 	rapidCommit := true
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0", "eth1"},
+			Interfaces: []string{testInterfaceEth0, "eth1"},
 		},
 		ValidLifetime:     &validLifetime,
 		PreferredLifetime: &preferredLifetime,
 		RenewTimer:        &renewTimer,
 		RebindTimer:       &rebindTimer,
 		RapidCommit:       &rapidCommit,
-		ServerTag:         "server1",
+		ServerTag:         testServerName1,
 		LeaseDatabase: &keav1alpha1.DatabaseConfig{
 			Type: keav1alpha1.DatabaseTypeMemfile,
 		},
@@ -183,10 +183,10 @@ func TestDhcp6FullConfig(t *testing.T) {
 			{Name: "dns-recursive-name-server", Data: "2001:db8:1::dead:beef"},
 		},
 		Loggers: []keav1alpha1.LoggerConfig{
-			{Name: "kea-dhcp6", Severity: "INFO"},
+			{Name: "kea-dhcp6", Severity: testSeverityInfo},
 		},
 		ControlSocket: &keav1alpha1.ControlSocket{
-			SocketType: "unix",
+			SocketType: testSocketTypeUnix,
 			SocketName: "/run/kea/kea6-ctrl-socket",
 		},
 	}
@@ -209,7 +209,7 @@ func TestDhcp6FullConfig(t *testing.T) {
 
 	for _, key := range []string{
 		"interfaces-config", "valid-lifetime", "preferred-lifetime", "renew-timer",
-		"rebind-timer", "rapid-commit", "server-tag", "lease-database", "subnet6",
+		"rebind-timer", "rapid-commit", "server-tag", testLeaseDatabaseK, "subnet6",
 		"option-data", "loggers", "control-socket",
 	} {
 		if _, ok := dhcp6[key]; !ok {
@@ -220,7 +220,7 @@ func TestDhcp6FullConfig(t *testing.T) {
 	if vl, ok := dhcp6["valid-lifetime"].(float64); !ok || int32(vl) != 4000 {
 		t.Errorf("expected valid-lifetime 4000, got %v", dhcp6["valid-lifetime"])
 	}
-	if dhcp6["server-tag"] != "server1" {
+	if dhcp6["server-tag"] != testServerName1 {
 		t.Errorf("expected server-tag 'server1', got %v", dhcp6["server-tag"])
 	}
 	if dhcp6["rapid-commit"] != true {
@@ -231,12 +231,12 @@ func TestDhcp6FullConfig(t *testing.T) {
 func TestDhcp6SharedNetworks(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		SharedNetworks: []keav1alpha1.SharedNetwork6{
 			{
-				Name:      "office-network",
-				Interface: "eth0",
+				Name:      testSharedNetwork,
+				Interface: testInterfaceEth0,
 				Subnet6: []keav1alpha1.Subnet6{
 					{
 						ID:     10,
@@ -278,10 +278,10 @@ func TestDhcp6SharedNetworks(t *testing.T) {
 	}
 
 	net := sn[0].(map[string]interface{})
-	if net["name"] != "office-network" {
-		t.Errorf("expected name 'office-network', got %v", net["name"])
+	if net[fieldName] != testSharedNetwork {
+		t.Errorf("expected name 'office-network', got %v", net[fieldName])
 	}
-	if net["interface"] != "eth0" {
+	if net["interface"] != testInterfaceEth0 {
 		t.Errorf("expected interface 'eth0', got %v", net["interface"])
 	}
 
@@ -300,24 +300,24 @@ func TestDhcp6WithHA(t *testing.T) {
 	autoFailover := true
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		HighAvailability: &keav1alpha1.HAConfig{
-			ThisServerName:   "server1",
-			Mode:             "load-balancing",
+			ThisServerName:   testServerName1,
+			Mode:             testHAModeLB,
 			HeartbeatDelay:   &heartbeat,
 			MaxResponseDelay: &maxResponse,
 			Peers: []keav1alpha1.HAPeer{
 				{
-					Name:         "server1",
-					URL:          "http://server1:8000/",
-					Role:         "primary",
+					Name:         testServerName1,
+					URL:          testServer1URL,
+					Role:         testRolePrimary,
 					AutoFailover: &autoFailover,
 				},
 				{
-					Name:         "server2",
-					URL:          "http://server2:8000/",
-					Role:         "standby",
+					Name:         testServerName2,
+					URL:          testServer2URL,
+					Role:         testRoleStandby,
 					AutoFailover: &autoFailover,
 				},
 			},
@@ -336,7 +336,7 @@ func TestDhcp6WithHA(t *testing.T) {
 	}
 
 	dhcp6 := root["Dhcp6"].(map[string]interface{})
-	hooks, ok := dhcp6["hooks-libraries"].([]interface{})
+	hooks, ok := dhcp6[testHooksLibrariesK].([]interface{})
 	if !ok {
 		t.Fatal("expected hooks-libraries in HA config")
 	}
@@ -345,12 +345,12 @@ func TestDhcp6WithHA(t *testing.T) {
 	}
 
 	hook0 := hooks[0].(map[string]interface{})
-	if hook0["library"] != "/usr/lib/kea/hooks/libdhcp_lease_cmds.so" {
+	if hook0["library"] != leaseCmdsHookLib {
 		t.Errorf("expected first hook to be lease_cmds, got %v", hook0["library"])
 	}
 
 	hook1 := hooks[1].(map[string]interface{})
-	if hook1["library"] != "/usr/lib/kea/hooks/libdhcp_ha.so" {
+	if hook1["library"] != haHookLib {
 		t.Errorf("expected second hook to be ha, got %v", hook1["library"])
 	}
 
@@ -366,10 +366,10 @@ func TestDhcp6WithHA(t *testing.T) {
 		t.Fatalf("expected 1 HA config entry, got %d", len(haArray))
 	}
 	haConfig := haArray[0].(map[string]interface{})
-	if haConfig["this-server-name"] != "server1" {
+	if haConfig["this-server-name"] != testServerName1 {
 		t.Errorf("expected this-server-name 'server1', got %v", haConfig["this-server-name"])
 	}
-	if haConfig["mode"] != "load-balancing" {
+	if haConfig["mode"] != testHAModeLB {
 		t.Errorf("expected mode 'load-balancing', got %v", haConfig["mode"])
 	}
 
@@ -386,21 +386,21 @@ func TestDhcp6WithServerNameOverride(t *testing.T) {
 	heartbeat := int32(10000)
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		HighAvailability: &keav1alpha1.HAConfig{
-			ThisServerName: "server1",
-			Mode:           "hot-standby",
+			ThisServerName: testServerName1,
+			Mode:           testHAModeHotStandby,
 			HeartbeatDelay: &heartbeat,
 			Peers: []keav1alpha1.HAPeer{
-				{Name: "server1", URL: "http://server1:8000/", Role: "primary"},
-				{Name: "server2", URL: "http://server2:8000/", Role: "standby"},
+				{Name: testServerName1, URL: testServer1URL, Role: testRolePrimary},
+				{Name: testServerName2, URL: testServer2URL, Role: testRoleStandby},
 			},
 		},
 	}
 
 	renderer := NewDhcp6ConfigRenderer(spec)
-	data, err := renderer.RenderJSONWithServerName("server2")
+	data, err := renderer.RenderJSONWithServerName(testServerName2)
 	if err != nil {
 		t.Fatalf("RenderJSONWithServerName failed: %v", err)
 	}
@@ -411,13 +411,13 @@ func TestDhcp6WithServerNameOverride(t *testing.T) {
 	}
 
 	dhcp6 := root["Dhcp6"].(map[string]interface{})
-	hooks := dhcp6["hooks-libraries"].([]interface{})
+	hooks := dhcp6[testHooksLibrariesK].([]interface{})
 	haHook := hooks[1].(map[string]interface{})
 	params := haHook["parameters"].(map[string]interface{})
 	haArray := params["high-availability"].([]interface{})
 	haConfig := haArray[0].(map[string]interface{})
 
-	if haConfig["this-server-name"] != "server2" {
+	if haConfig["this-server-name"] != testServerName2 {
 		t.Errorf("expected this-server-name override 'server2', got %v", haConfig["this-server-name"])
 	}
 }
@@ -426,18 +426,18 @@ func TestDhcp6WithDatabase(t *testing.T) {
 	port := int32(3306)
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		LeaseDatabase: &keav1alpha1.DatabaseConfig{
 			Type: keav1alpha1.DatabaseTypeMySQL,
 			Name: "kea_leases6",
-			Host: "db.example.com",
+			Host: testDBHost,
 			Port: &port,
 		},
 	}
 
 	renderer := NewDhcp6ConfigRenderer(spec)
-	renderer.LeaseDBCreds = DBCredentials{User: "kea_user", Password: "kea_pass"}
+	renderer.LeaseDBCreds = DBCredentials{User: testDBUser, Password: "kea_pass"}
 	data, err := renderer.RenderJSON()
 	if err != nil {
 		t.Fatalf("RenderJSON failed: %v", err)
@@ -449,28 +449,28 @@ func TestDhcp6WithDatabase(t *testing.T) {
 	}
 
 	dhcp6 := root["Dhcp6"].(map[string]interface{})
-	leaseDb, ok := dhcp6["lease-database"].(map[string]interface{})
+	leaseDb, ok := dhcp6[testLeaseDatabaseK].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected lease-database in config")
 	}
-	if leaseDb["type"] != "mysql" {
+	if leaseDb["type"] != dbTypeMySQL {
 		t.Errorf("expected type 'mysql', got %v", leaseDb["type"])
 	}
-	if leaseDb["name"] != "kea_leases6" {
-		t.Errorf("expected name 'kea_leases6', got %v", leaseDb["name"])
+	if leaseDb[fieldName] != "kea_leases6" {
+		t.Errorf("expected name 'kea_leases6', got %v", leaseDb[fieldName])
 	}
-	if leaseDb["host"] != "db.example.com" {
+	if leaseDb["host"] != testDBHost {
 		t.Errorf("expected host 'db.example.com', got %v", leaseDb["host"])
 	}
 	if int32(leaseDb["port"].(float64)) != 3306 {
 		t.Errorf("expected port 3306, got %v", leaseDb["port"])
 	}
-	if leaseDb["user"] != "kea_user" {
+	if leaseDb["user"] != testDBUser {
 		t.Errorf("expected user 'kea_user', got %v", leaseDb["user"])
 	}
 
 	// Verify the MySQL hook library is automatically injected
-	hooks, ok := dhcp6["hooks-libraries"].([]interface{})
+	hooks, ok := dhcp6[testHooksLibrariesK].([]interface{})
 	if !ok {
 		t.Fatal("expected hooks-libraries when mysql lease-database is configured")
 	}
@@ -492,7 +492,7 @@ func TestDhcp6WithPreferredLifetime(t *testing.T) {
 	validLifetime := int32(4000)
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		PreferredLifetime: &preferredLifetime,
 		ValidLifetime:     &validLifetime,

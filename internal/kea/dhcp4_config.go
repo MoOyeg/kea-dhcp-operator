@@ -246,7 +246,7 @@ func (r *Dhcp4ConfigRenderer) renderSubnet4(sub keav1alpha1.Subnet4) map[string]
 	setIfNotEmpty(sm, "interface", sub.Interface)
 	if sub.Relay != nil && len(sub.Relay.IPAddresses) > 0 {
 		sm["relay"] = map[string]interface{}{
-			"ip-addresses": sub.Relay.IPAddresses,
+			fieldIPAddresses: sub.Relay.IPAddresses,
 		}
 	}
 	setIfNotNil(sm, "valid-lifetime", sub.ValidLifetime)
@@ -287,7 +287,7 @@ func (r *Dhcp4ConfigRenderer) renderSharedNetworks4() []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(r.Spec.SharedNetworks))
 	for _, sn := range r.Spec.SharedNetworks {
 		snm := map[string]interface{}{
-			"name": sn.Name,
+			fieldName: sn.Name,
 		}
 		if len(sn.Subnet4) > 0 {
 			subs := make([]map[string]interface{}, 0, len(sn.Subnet4))
@@ -302,7 +302,7 @@ func (r *Dhcp4ConfigRenderer) renderSharedNetworks4() []map[string]interface{} {
 		}
 		if sn.Relay != nil && len(sn.Relay.IPAddresses) > 0 {
 			snm["relay"] = map[string]interface{}{
-				"ip-addresses": sn.Relay.IPAddresses,
+				fieldIPAddresses: sn.Relay.IPAddresses,
 			}
 		}
 		setIfNotEmpty(snm, "client-class", sn.ClientClass)

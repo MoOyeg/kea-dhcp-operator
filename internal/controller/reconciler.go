@@ -226,7 +226,7 @@ func dbCredentialEnvVars(prefix string, db *keav1alpha1.DatabaseConfig) (envVars
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: *db.CredentialsSecretRef,
-					Key:                  "username",
+					Key:                  secretKeyUsername,
 				},
 			},
 		},
@@ -235,7 +235,7 @@ func dbCredentialEnvVars(prefix string, db *keav1alpha1.DatabaseConfig) (envVars
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: *db.CredentialsSecretRef,
-					Key:                  "password",
+					Key:                  secretKeyPassword,
 				},
 			},
 		},

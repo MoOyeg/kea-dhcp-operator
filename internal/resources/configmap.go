@@ -24,10 +24,10 @@ import (
 // componentConfigFile maps a component name to the corresponding Kea
 // configuration file name.
 var componentConfigFile = map[string]string{
-	"dhcp4":      "kea-dhcp4.conf",
-	"dhcp6":      "kea-dhcp6.conf",
-	"ctrl-agent": "kea-ctrl-agent.conf",
-	"ddns":       "kea-dhcp-ddns.conf",
+	ComponentDhcp4:     "kea-dhcp4.conf",
+	ComponentDhcp6:     "kea-dhcp6.conf",
+	ComponentCtrlAgent: "kea-ctrl-agent.conf",
+	ComponentDdns:      "kea-dhcp-ddns.conf",
 }
 
 // ConfigFileName returns the Kea configuration file name for the given

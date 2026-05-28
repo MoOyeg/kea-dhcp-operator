@@ -25,10 +25,10 @@ func TestBuildDeploymentDefaultImages(t *testing.T) {
 		component     string
 		expectedImage string
 	}{
-		{"dhcp4", DefaultKeaDhcp4Image},
-		{"dhcp6", DefaultKeaDhcp6Image},
-		{"ctrl-agent", DefaultKeaCtrlAgentImage},
-		{"ddns", DefaultKeaDhcpDdnsImage},
+		{ComponentDhcp4, DefaultKeaDhcp4Image},
+		{ComponentDhcp6, DefaultKeaDhcp6Image},
+		{ComponentCtrlAgent, DefaultKeaCtrlAgentImage},
+		{ComponentDdns, DefaultKeaDhcpDdnsImage},
 	}
 	for _, tc := range tests {
 		t.Run(tc.component, func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestBuildDeploymentUserImageOverride(t *testing.T) {
 	dp := DeploymentParams{
 		CRName:         "test",
 		Namespace:      "default",
-		Component:      "dhcp4",
+		Component:      ComponentDhcp4,
 		Command:        "/usr/sbin/kea-dhcp4",
 		ConfigFileName: "kea-dhcp4.conf",
 		ConfigMapName:  "test-dhcp4",
@@ -72,10 +72,10 @@ func TestDefaultImageForComponent(t *testing.T) {
 		component string
 		expected  string
 	}{
-		{"dhcp4", DefaultKeaDhcp4Image},
-		{"dhcp6", DefaultKeaDhcp6Image},
-		{"ctrl-agent", DefaultKeaCtrlAgentImage},
-		{"ddns", DefaultKeaDhcpDdnsImage},
+		{ComponentDhcp4, DefaultKeaDhcp4Image},
+		{ComponentDhcp6, DefaultKeaDhcp6Image},
+		{ComponentCtrlAgent, DefaultKeaCtrlAgentImage},
+		{ComponentDdns, DefaultKeaDhcpDdnsImage},
 		{"unknown", ""},
 	}
 	for _, tc := range tests {

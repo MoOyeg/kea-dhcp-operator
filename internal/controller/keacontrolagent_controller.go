@@ -89,7 +89,7 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	configJSON, err := renderer.RenderJSON()
 	if err != nil {
 		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-		agent.Status.Phase = "Error"
+		agent.Status.Phase = keav1alpha1.PhaseError
 		if statusErr := r.Status().Update(ctx, agent); statusErr != nil {
 			logger.Error(statusErr, "failed to update status after config render error")
 		}
@@ -208,11 +208,11 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	agent.Status.ObservedGeneration = agent.Generation
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
-		agent.Status.Phase = "Running"
+		agent.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "DeploymentReady", "All replicas are ready")
 		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "Deployment is complete")
 	} else {
-		agent.Status.Phase = "Progressing"
+		agent.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "DeploymentProgressing",
 			fmt.Sprintf("%d/%d replicas ready", readyReplicas, *replicas))
 		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "DeploymentProgressing", "Waiting for replicas")

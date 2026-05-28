@@ -25,7 +25,7 @@ import (
 
 func TestDdnsMinimalConfig(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcpDdnsSpec{
-		IPAddress: "127.0.0.1",
+		IPAddress: testLoopbackIP,
 	}
 	renderer := NewDdnsConfigRenderer(spec)
 	data, err := renderer.RenderJSON()
@@ -44,12 +44,12 @@ func TestDdnsMinimalConfig(t *testing.T) {
 		t.Fatal("expected 'DhcpDdns' root key in JSON output")
 	}
 
-	if ddns["ip-address"] != "127.0.0.1" {
+	if ddns["ip-address"] != testLoopbackIP {
 		t.Errorf("expected ip-address '127.0.0.1', got %v", ddns["ip-address"])
 	}
 
 	// Should not have optional sections
-	for _, key := range []string{"forward-ddns", "reverse-ddns", "tsig-keys", "hooks-libraries"} {
+	for _, key := range []string{"forward-ddns", "reverse-ddns", "tsig-keys", testHooksLibrariesK} {
 		if _, ok := ddns[key]; ok {
 			t.Errorf("expected key %q not to be set in minimal config", key)
 		}
@@ -59,7 +59,7 @@ func TestDdnsMinimalConfig(t *testing.T) {
 func TestDdnsWithForwardDDNS(t *testing.T) {
 	dnsPort := int32(53)
 	spec := &keav1alpha1.KeaDhcpDdnsSpec{
-		IPAddress: "127.0.0.1",
+		IPAddress: testLoopbackIP,
 		ForwardDDNS: &keav1alpha1.DDNSConfig{
 			DDNSDomains: []keav1alpha1.DDNSDomain{
 				{
@@ -114,8 +114,8 @@ func TestDdnsWithForwardDDNS(t *testing.T) {
 
 	// Check first domain
 	dom0 := domains[0].(map[string]interface{})
-	if dom0["name"] != "example.com." {
-		t.Errorf("expected domain name 'example.com.', got %v", dom0["name"])
+	if dom0[fieldName] != "example.com." {
+		t.Errorf("expected domain name 'example.com.', got %v", dom0[fieldName])
 	}
 	if dom0["key-name"] != "my-tsig-key" {
 		t.Errorf("expected key-name 'my-tsig-key', got %v", dom0["key-name"])
@@ -154,19 +154,19 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 	port := int32(53001)
 	dnsTimeout := int32(500)
 	spec := &keav1alpha1.KeaDhcpDdnsSpec{
-		IPAddress:        "127.0.0.1",
+		IPAddress:        testLoopbackIP,
 		Port:             &port,
 		DNSServerTimeout: &dnsTimeout,
 		NCRProtocol:      "UDP",
 		NCRFormat:        "JSON",
 		TSIGKeys: []keav1alpha1.TSIGKey{
 			{
-				Name:       "my-hmac-md5",
+				Name:       testTSIGKeyMD5,
 				Algorithm:  "HMAC-MD5",
 				DigestBits: &digestBits,
 			},
 			{
-				Name:      "my-hmac-sha256",
+				Name:      testTSIGKeySHA256,
 				Algorithm: "HMAC-SHA256",
 			},
 		},
@@ -174,8 +174,8 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 
 	renderer := NewDdnsConfigRenderer(spec)
 	renderer.ResolvedTSIGSecrets = map[string]string{
-		"my-hmac-md5":    "LSWXnfkKZjdPJI5QxlpnfQ==",
-		"my-hmac-sha256": "YmluZDEwa2V5Cg==",
+		testTSIGKeyMD5:    "LSWXnfkKZjdPJI5QxlpnfQ==",
+		testTSIGKeySHA256: "YmluZDEwa2V5Cg==",
 	}
 	data, err := renderer.RenderJSON()
 	if err != nil {
@@ -213,8 +213,8 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 	}
 
 	key0 := keys[0].(map[string]interface{})
-	if key0["name"] != "my-hmac-md5" {
-		t.Errorf("expected key name 'my-hmac-md5', got %v", key0["name"])
+	if key0[fieldName] != testTSIGKeyMD5 {
+		t.Errorf("expected key name 'my-hmac-md5', got %v", key0[fieldName])
 	}
 	if key0["algorithm"] != "HMAC-MD5" {
 		t.Errorf("expected algorithm 'HMAC-MD5', got %v", key0["algorithm"])
@@ -227,8 +227,8 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 	}
 
 	key1 := keys[1].(map[string]interface{})
-	if key1["name"] != "my-hmac-sha256" {
-		t.Errorf("expected key name 'my-hmac-sha256', got %v", key1["name"])
+	if key1[fieldName] != testTSIGKeySHA256 {
+		t.Errorf("expected key name 'my-hmac-sha256', got %v", key1[fieldName])
 	}
 	// digest-bits should not be set for second key
 	if _, ok := key1["digest-bits"]; ok {

@@ -26,7 +26,7 @@ import (
 func TestDhcp4MinimalConfig(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 	}
 	renderer := NewDhcp4ConfigRenderer(spec)
@@ -56,12 +56,12 @@ func TestDhcp4MinimalConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("expected 'interfaces' to be an array")
 	}
-	if len(ifaces) != 1 || ifaces[0] != "eth0" {
+	if len(ifaces) != 1 || ifaces[0] != testInterfaceEth0 {
 		t.Fatalf("expected interfaces ['eth0'], got %v", ifaces)
 	}
 
 	// Should not have optional sections
-	for _, key := range []string{"subnet4", "shared-networks", "lease-database", "hooks-libraries"} {
+	for _, key := range []string{"subnet4", "shared-networks", testLeaseDatabaseK, testHooksLibrariesK} {
 		if _, ok := dhcp4[key]; ok {
 			t.Fatalf("expected key %q not to be set in minimal config", key)
 		}
@@ -76,7 +76,7 @@ func TestDhcp4FullConfig(t *testing.T) {
 	redetect := false
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces:     []string{"eth0", "eth1"},
+			Interfaces:     []string{testInterfaceEth0, "eth1"},
 			DHCPSocketType: "raw",
 			ReDetect:       &redetect,
 		},
@@ -84,14 +84,14 @@ func TestDhcp4FullConfig(t *testing.T) {
 		RenewTimer:    &renewTimer,
 		RebindTimer:   &rebindTimer,
 		Authoritative: &authoritative,
-		ServerTag:     "server1",
+		ServerTag:     testServerName1,
 		LeaseDatabase: &keav1alpha1.DatabaseConfig{
 			Type: keav1alpha1.DatabaseTypeMemfile,
 		},
 		Subnet4: []keav1alpha1.Subnet4{
 			{
 				ID:     1,
-				Subnet: "192.168.1.0/24",
+				Subnet: testSubnet4,
 				Pools: []keav1alpha1.Pool4{
 					{Pool: "192.168.1.10 - 192.168.1.200"},
 				},
@@ -101,11 +101,11 @@ func TestDhcp4FullConfig(t *testing.T) {
 			{Name: "routers", Data: "192.168.1.1"},
 		},
 		Loggers: []keav1alpha1.LoggerConfig{
-			{Name: "kea-dhcp4", Severity: "INFO"},
+			{Name: testNameDhcp4, Severity: testSeverityInfo},
 		},
 		ControlSocket: &keav1alpha1.ControlSocket{
-			SocketType: "unix",
-			SocketName: "/run/kea/kea4-ctrl-socket",
+			SocketType: testSocketTypeUnix,
+			SocketName: testCtrlSocketPath,
 		},
 	}
 
@@ -128,7 +128,7 @@ func TestDhcp4FullConfig(t *testing.T) {
 	// Verify all expected sections are present
 	for _, key := range []string{
 		"interfaces-config", "valid-lifetime", "renew-timer", "rebind-timer",
-		"authoritative", "server-tag", "lease-database", "subnet4",
+		"authoritative", "server-tag", testLeaseDatabaseK, "subnet4",
 		"option-data", "loggers", "control-socket",
 	} {
 		if _, ok := dhcp4[key]; !ok {
@@ -142,7 +142,7 @@ func TestDhcp4FullConfig(t *testing.T) {
 	}
 
 	// Check server-tag
-	if dhcp4["server-tag"] != "server1" {
+	if dhcp4["server-tag"] != testServerName1 {
 		t.Errorf("expected server-tag 'server1', got %v", dhcp4["server-tag"])
 	}
 
@@ -161,7 +161,7 @@ func TestDhcp4SubnetsAndPools(t *testing.T) {
 		Subnet4: []keav1alpha1.Subnet4{
 			{
 				ID:     1,
-				Subnet: "192.168.1.0/24",
+				Subnet: testSubnet4,
 				Pools: []keav1alpha1.Pool4{
 					{Pool: "192.168.1.10 - 192.168.1.100"},
 					{Pool: "192.168.1.150 - 192.168.1.200"},
@@ -215,7 +215,7 @@ func TestDhcp4SubnetsAndPools(t *testing.T) {
 	if int32(sub1["id"].(float64)) != 1 {
 		t.Errorf("expected subnet 1 id=1, got %v", sub1["id"])
 	}
-	if sub1["subnet"] != "192.168.1.0/24" {
+	if sub1["subnet"] != testSubnet4 {
 		t.Errorf("expected subnet '192.168.1.0/24', got %v", sub1["subnet"])
 	}
 	pools := sub1["pools"].([]interface{})
@@ -248,12 +248,12 @@ func TestDhcp4SubnetsAndPools(t *testing.T) {
 func TestDhcp4SharedNetworks(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		SharedNetworks: []keav1alpha1.SharedNetwork4{
 			{
-				Name:      "office-network",
-				Interface: "eth0",
+				Name:      testSharedNetwork,
+				Interface: testInterfaceEth0,
 				Subnet4: []keav1alpha1.Subnet4{
 					{
 						ID:     10,
@@ -295,10 +295,10 @@ func TestDhcp4SharedNetworks(t *testing.T) {
 	}
 
 	net := sn[0].(map[string]interface{})
-	if net["name"] != "office-network" {
-		t.Errorf("expected name 'office-network', got %v", net["name"])
+	if net[fieldName] != testSharedNetwork {
+		t.Errorf("expected name 'office-network', got %v", net[fieldName])
 	}
-	if net["interface"] != "eth0" {
+	if net["interface"] != testInterfaceEth0 {
 		t.Errorf("expected interface 'eth0', got %v", net["interface"])
 	}
 
@@ -317,24 +317,24 @@ func TestDhcp4WithHA(t *testing.T) {
 	autoFailover := true
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		HighAvailability: &keav1alpha1.HAConfig{
-			ThisServerName:   "server1",
-			Mode:             "load-balancing",
+			ThisServerName:   testServerName1,
+			Mode:             testHAModeLB,
 			HeartbeatDelay:   &heartbeat,
 			MaxResponseDelay: &maxResponse,
 			Peers: []keav1alpha1.HAPeer{
 				{
-					Name:         "server1",
-					URL:          "http://server1:8000/",
-					Role:         "primary",
+					Name:         testServerName1,
+					URL:          testServer1URL,
+					Role:         testRolePrimary,
 					AutoFailover: &autoFailover,
 				},
 				{
-					Name:         "server2",
-					URL:          "http://server2:8000/",
-					Role:         "standby",
+					Name:         testServerName2,
+					URL:          testServer2URL,
+					Role:         testRoleStandby,
 					AutoFailover: &autoFailover,
 				},
 			},
@@ -353,7 +353,7 @@ func TestDhcp4WithHA(t *testing.T) {
 	}
 
 	dhcp4 := root["Dhcp4"].(map[string]interface{})
-	hooks, ok := dhcp4["hooks-libraries"].([]interface{})
+	hooks, ok := dhcp4[testHooksLibrariesK].([]interface{})
 	if !ok {
 		t.Fatal("expected hooks-libraries in HA config")
 	}
@@ -363,13 +363,13 @@ func TestDhcp4WithHA(t *testing.T) {
 
 	// First hook should be lease_cmds
 	hook0 := hooks[0].(map[string]interface{})
-	if hook0["library"] != "/usr/lib/kea/hooks/libdhcp_lease_cmds.so" {
+	if hook0["library"] != leaseCmdsHookLib {
 		t.Errorf("expected first hook to be lease_cmds, got %v", hook0["library"])
 	}
 
 	// Second hook should be ha
 	hook1 := hooks[1].(map[string]interface{})
-	if hook1["library"] != "/usr/lib/kea/hooks/libdhcp_ha.so" {
+	if hook1["library"] != haHookLib {
 		t.Errorf("expected second hook to be ha, got %v", hook1["library"])
 	}
 
@@ -386,10 +386,10 @@ func TestDhcp4WithHA(t *testing.T) {
 		t.Fatalf("expected 1 HA config entry, got %d", len(haArray))
 	}
 	haConfig := haArray[0].(map[string]interface{})
-	if haConfig["this-server-name"] != "server1" {
+	if haConfig["this-server-name"] != testServerName1 {
 		t.Errorf("expected this-server-name 'server1', got %v", haConfig["this-server-name"])
 	}
-	if haConfig["mode"] != "load-balancing" {
+	if haConfig["mode"] != testHAModeLB {
 		t.Errorf("expected mode 'load-balancing', got %v", haConfig["mode"])
 	}
 
@@ -406,18 +406,18 @@ func TestDhcp4WithDatabase(t *testing.T) {
 	port := int32(3306)
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
-			Interfaces: []string{"eth0"},
+			Interfaces: []string{testInterfaceEth0},
 		},
 		LeaseDatabase: &keav1alpha1.DatabaseConfig{
 			Type: keav1alpha1.DatabaseTypeMySQL,
-			Name: "kea_leases",
-			Host: "db.example.com",
+			Name: testLeaseDBName,
+			Host: testDBHost,
 			Port: &port,
 		},
 	}
 
 	renderer := NewDhcp4ConfigRenderer(spec)
-	renderer.LeaseDBCreds = DBCredentials{User: "kea_user", Password: "kea_pass"}
+	renderer.LeaseDBCreds = DBCredentials{User: testDBUser, Password: "kea_pass"}
 	data, err := renderer.RenderJSON()
 	if err != nil {
 		t.Fatalf("RenderJSON failed: %v", err)
@@ -429,28 +429,28 @@ func TestDhcp4WithDatabase(t *testing.T) {
 	}
 
 	dhcp4 := root["Dhcp4"].(map[string]interface{})
-	leaseDb, ok := dhcp4["lease-database"].(map[string]interface{})
+	leaseDb, ok := dhcp4[testLeaseDatabaseK].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected lease-database in config")
 	}
-	if leaseDb["type"] != "mysql" {
+	if leaseDb["type"] != dbTypeMySQL {
 		t.Errorf("expected type 'mysql', got %v", leaseDb["type"])
 	}
-	if leaseDb["name"] != "kea_leases" {
-		t.Errorf("expected name 'kea_leases', got %v", leaseDb["name"])
+	if leaseDb[fieldName] != testLeaseDBName {
+		t.Errorf("expected name 'kea_leases', got %v", leaseDb[fieldName])
 	}
-	if leaseDb["host"] != "db.example.com" {
+	if leaseDb["host"] != testDBHost {
 		t.Errorf("expected host 'db.example.com', got %v", leaseDb["host"])
 	}
 	if int32(leaseDb["port"].(float64)) != 3306 {
 		t.Errorf("expected port 3306, got %v", leaseDb["port"])
 	}
-	if leaseDb["user"] != "kea_user" {
+	if leaseDb["user"] != testDBUser {
 		t.Errorf("expected user 'kea_user', got %v", leaseDb["user"])
 	}
 
 	// Verify the MySQL hook library is automatically injected
-	hooks, ok := dhcp4["hooks-libraries"].([]interface{})
+	hooks, ok := dhcp4[testHooksLibrariesK].([]interface{})
 	if !ok {
 		t.Fatal("expected hooks-libraries when mysql lease-database is configured")
 	}

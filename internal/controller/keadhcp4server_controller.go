@@ -137,7 +137,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		configJSON, err := renderer.RenderJSON()
 		if err != nil {
 			setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-			server.Status.Phase = "Error"
+			server.Status.Phase = keav1alpha1.PhaseError
 			if statusErr := r.Status().Update(ctx, server); statusErr != nil {
 				logger.Error(statusErr, "failed to update status after config render error")
 			}
@@ -168,258 +168,365 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// 5. Extract common pod parameters.
-	image := server.Spec.Container.Image
-	hostNetwork := false
-	if server.Spec.HostNetwork != nil {
-		hostNetwork = *server.Spec.HostNetwork
-	}
-
-	var nodeSelector map[string]string
-	var tolerations []corev1.Toleration
-	var affinity *corev1.Affinity
-	var podAnnotations map[string]string
-	if server.Spec.Placement != nil {
-		nodeSelector = server.Spec.Placement.NodeSelector
-		tolerations = server.Spec.Placement.Tolerations
-		affinity = server.Spec.Placement.Affinity
-		podAnnotations = server.Spec.Placement.PodAnnotations
-	}
-
-	var tlsSecretName string
-	if server.Spec.HighAvailability != nil && server.Spec.HighAvailability.TLS != nil {
-		tlsSecretName = server.Spec.HighAvailability.TLS.SecretRef.Name
-	}
+	pp := r.resolveDhcp4PodParams(server)
 
 	// Resolve Stork agent sidecar params (if enabled).
-	var storkAgent *resources.StorkSidecarParams
-	if server.Spec.Stork != nil && server.Spec.Stork.Enabled {
-		storkCfg := server.Spec.Stork.DeepCopy()
-
-		// Auto-discover Stork server if no explicit serverURL is set.
-		if storkCfg.ServerURL == "" {
-			if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
-				storkCfg.ServerURL = info.ServerURL
-				storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
-				logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
-			}
-		}
-
-		var serverToken string
-		if storkCfg.ServerTokenSecretRef != nil {
-			serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
-		}
-		var err error
-		storkAgent, err = resources.ResolveStorkParams(storkCfg, serverToken)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("resolving stork agent params: %w", err)
-		}
+	storkAgent, err := r.resolveDhcp4StorkAgent(ctx, server)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 6. Reconcile workload (StatefulSet for HA, Deployment otherwise).
-	var readyReplicas int32
-
-	if haEnabled {
-		// HA mode: create headless Service + StatefulSet.
-		haPort := int32(8000)
-		if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketPort != nil {
-			haPort = *server.Spec.ControlSocket.SocketPort
-		}
-
-		// Headless Service for StatefulSet DNS.
-		hlSvc := resources.BuildHeadlessService(resources.ServiceParams{
-			Namespace: server.Namespace,
-			CRName:    server.Name,
-			Component: component,
-			Port:      haPort,
-			Protocol:  corev1.ProtocolTCP,
-		})
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, hlSvc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling headless Service: %w", err)
-		}
-
-		// Build per-ordinal ConfigMap name map.
-		cmNames := make(map[int]string, int(*replicas))
-		for i := int32(0); i < *replicas; i++ {
-			cmNames[int(i)] = resources.HAConfigMapName(server.Name, component, int(i))
-		}
-
-		// Create per-pod Services with stable ClusterIPs for HA peer communication.
-		// The headless Service resolves to ephemeral pod IPs, but per-pod Services
-		// have stable ClusterIPs that survive pod restarts.
-		svcParams := resources.ServiceParams{
-			Namespace: server.Namespace,
-			CRName:    server.Name,
-			Component: component,
-			Port:      haPort,
-			Protocol:  corev1.ProtocolTCP,
-		}
-		for i := int32(0); i < *replicas; i++ {
-			perPodSvc := resources.BuildPerPodService(svcParams, int(i))
-			if err := reconcileResource(ctx, r.Client, r.Scheme, server, perPodSvc); err != nil {
-				return ctrl.Result{}, fmt.Errorf("reconciling per-pod Service for ordinal %d: %w", i, err)
-			}
-		}
-
-		// Build a mapping from headless hostnames (in the config) to per-pod Service
-		// hostnames (with stable ClusterIPs). The init container resolves the Service
-		// DNS and replaces the headless hostname in the config.
-		peerHostnameMap := make(map[string]string)
-		for i, peer := range server.Spec.HighAvailability.Peers {
-			u, err := url.Parse(peer.URL)
-			if err != nil {
-				continue
-			}
-			headlessHostname := u.Hostname()
-			if err := resources.ValidateHostname(headlessHostname); err != nil {
-				return ctrl.Result{}, fmt.Errorf("HA peer %d URL: %w", i, err)
-			}
-			perPodSvcName := resources.PerPodServiceName(server.Name, component, i)
-			perPodSvcHostname := fmt.Sprintf("%s.%s.svc.cluster.local", perPodSvcName, server.Namespace)
-			peerHostnameMap[headlessHostname] = perPodSvcHostname
-		}
-
-		// Build peer address map from HA peer specs.
-		peerAddresses := make(map[int]string)
-		for i, peer := range server.Spec.HighAvailability.Peers {
-			if peer.Address != "" {
-				peerAddresses[i] = peer.Address
-			}
-		}
-
-		sp := resources.StatefulSetParams{
-			Namespace:          server.Namespace,
-			CRName:             server.Name,
-			Component:          component,
-			Command:            resources.DefaultCommandForComponent(component),
-			ConfigFileName:     resources.ConfigFileName(component),
-			Image:              image,
-			ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
-			Replicas:           replicas,
-			Resources:          server.Spec.Container.Resources,
-			HostNetwork:        hostNetwork,
-			NodeSelector:       nodeSelector,
-			Tolerations:        tolerations,
-			Affinity:           affinity,
-			TLSSecretName:      tlsSecretName,
-			ServiceAccountName: resources.ServiceAccountName(server.Name),
-			ConfigHash:         configHash,
-			ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
-			PodAnnotations:     podAnnotations,
-			ConfigMapNames:     cmNames,
-			PeerHostnameMap:    peerHostnameMap,
-			NADInterface:       nadInterface(server),
-			NADSubnet:          nadSubnet(server),
-			PeerAddresses:      peerAddresses,
-			StorkAgent:         storkAgent,
-			SecretEnvVars:      secretEnvVars,
-		}
-		sts := resources.BuildStatefulSet(sp)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, sts); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling StatefulSet: %w", err)
-		}
-
-		// Get ready replicas from StatefulSet.
-		currentSTS := &appsv1.StatefulSet{}
-		stsKey := types.NamespacedName{
-			Name:      resources.StatefulSetName(server.Name, component),
-			Namespace: server.Namespace,
-		}
-		if err := r.Get(ctx, stsKey, currentSTS); err == nil {
-			readyReplicas = currentSTS.Status.ReadyReplicas
-		}
-	} else {
-		// Standard mode: Deployment.
-		dp := resources.DeploymentParams{
-			Namespace:          server.Namespace,
-			CRName:             server.Name,
-			Component:          component,
-			Command:            resources.DefaultCommandForComponent(component),
-			ConfigFileName:     resources.ConfigFileName(component),
-			ConfigMapName:      resources.ConfigMapName(server.Name, component),
-			Image:              image,
-			ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
-			Replicas:           replicas,
-			Resources:          server.Spec.Container.Resources,
-			HostNetwork:        hostNetwork,
-			NodeSelector:       nodeSelector,
-			Tolerations:        tolerations,
-			Affinity:           affinity,
-			TLSSecretName:      tlsSecretName,
-			ServiceAccountName: resources.ServiceAccountName(server.Name),
-			ConfigHash:         configHash,
-			ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
-			PodAnnotations:     podAnnotations,
-			NADInterface:       nadInterface(server),
-			NADSubnet:          nadSubnet(server),
-			StorkAgent:         storkAgent,
-			SecretEnvVars:      secretEnvVars,
-		}
-		deploy := resources.BuildDeployment(dp)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling Deployment: %w", err)
-		}
-
-		currentDeploy := &appsv1.Deployment{}
-		deployKey := types.NamespacedName{
-			Name:      resources.DeploymentName(server.Name, component),
-			Namespace: server.Namespace,
-		}
-		if err := r.Get(ctx, deployKey, currentDeploy); err == nil {
-			readyReplicas = currentDeploy.Status.ReadyReplicas
-		}
+	readyReplicas, err := r.reconcileDhcp4Workload(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent, haEnabled)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 7. Reconcile Service if control socket is HTTP.
-	if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketType == "http" {
-		port := int32(8000)
-		if server.Spec.ControlSocket.SocketPort != nil {
-			port = *server.Spec.ControlSocket.SocketPort
-		}
-		svc := resources.BuildService(resources.ServiceParams{
-			Namespace: server.Namespace,
-			CRName:    server.Name,
-			Component: component,
-			Port:      port,
-			Protocol:  corev1.ProtocolTCP,
-		})
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, svc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling Service: %w", err)
-		}
+	if err := r.reconcileDhcp4ControlService(ctx, server, component); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 8. Reconcile PodMonitor and Stork metrics Service (when stork is enabled).
-	if storkAgent != nil {
-		pm := resources.BuildPodMonitor(server.Namespace, server.Name, component)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, pm); err != nil {
-			logger.Error(err, "failed to reconcile PodMonitor (monitoring.coreos.com CRD may not be installed)")
-		}
-
-		storkSvc := resources.BuildStorkMetricsService(resources.StorkMetricsServiceParams{
-			Namespace:      server.Namespace,
-			CRName:         server.Name,
-			Component:      component,
-			AgentPort:      storkAgent.Port,
-			PrometheusPort: storkAgent.PrometheusPort,
-		})
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, storkSvc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling Stork metrics Service: %w", err)
-		}
-
-		// On OpenShift, create a Route for the Stork Prometheus metrics endpoint.
-		if r.IsOpenShift {
-			route := resources.BuildStorkMetricsRoute(resources.StorkRouteParams{
-				Namespace:      server.Namespace,
-				CRName:         server.Name,
-				Component:      component,
-				PrometheusPort: storkAgent.PrometheusPort,
-			})
-			if err := reconcileRoute(ctx, r.Client, r.Scheme, server, route); err != nil {
-				logger.Error(err, "failed to reconcile Stork metrics Route")
-			}
-		}
+	if err := r.reconcileDhcp4StorkMonitoring(ctx, server, component, storkAgent); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 9. Update status.
+	if err := r.updateDhcp4Status(ctx, server, component, configHash, readyReplicas, replicas); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaDhcp4Server")
+
+	return ctrl.Result{}, nil
+}
+
+// dhcp4PodParams holds resolved pod-level parameters shared between the HA
+// StatefulSet and standard Deployment workload builders.
+type dhcp4PodParams struct {
+	image          string
+	hostNetwork    bool
+	nodeSelector   map[string]string
+	tolerations    []corev1.Toleration
+	affinity       *corev1.Affinity
+	podAnnotations map[string]string
+	tlsSecretName  string
+}
+
+// resolveDhcp4PodParams extracts common pod parameters from the CR spec.
+func (r *KeaDhcp4ServerReconciler) resolveDhcp4PodParams(server *keav1alpha1.KeaDhcp4Server) dhcp4PodParams {
+	pp := dhcp4PodParams{
+		image: server.Spec.Container.Image,
+	}
+	if server.Spec.HostNetwork != nil {
+		pp.hostNetwork = *server.Spec.HostNetwork
+	}
+	if server.Spec.Placement != nil {
+		pp.nodeSelector = server.Spec.Placement.NodeSelector
+		pp.tolerations = server.Spec.Placement.Tolerations
+		pp.affinity = server.Spec.Placement.Affinity
+		pp.podAnnotations = server.Spec.Placement.PodAnnotations
+	}
+	if server.Spec.HighAvailability != nil && server.Spec.HighAvailability.TLS != nil {
+		pp.tlsSecretName = server.Spec.HighAvailability.TLS.SecretRef.Name
+	}
+	return pp
+}
+
+// resolveDhcp4StorkAgent resolves the Stork agent sidecar params (if enabled),
+// auto-discovering the Stork server when no explicit serverURL is configured.
+func (r *KeaDhcp4ServerReconciler) resolveDhcp4StorkAgent(ctx context.Context, server *keav1alpha1.KeaDhcp4Server) (*resources.StorkSidecarParams, error) {
+	if server.Spec.Stork == nil || !server.Spec.Stork.Enabled {
+		return nil, nil
+	}
+	logger := log.FromContext(ctx)
+	storkCfg := server.Spec.Stork.DeepCopy()
+
+	// Auto-discover Stork server if no explicit serverURL is set.
+	if storkCfg.ServerURL == "" {
+		if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
+			storkCfg.ServerURL = info.ServerURL
+			storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
+			logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
+		}
+	}
+
+	var serverToken string
+	if storkCfg.ServerTokenSecretRef != nil {
+		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
+	}
+	storkAgent, err := resources.ResolveStorkParams(storkCfg, serverToken)
+	if err != nil {
+		return nil, fmt.Errorf("resolving stork agent params: %w", err)
+	}
+	return storkAgent, nil
+}
+
+// reconcileDhcp4Workload reconciles the StatefulSet (HA) or Deployment (standard)
+// workload and returns the number of ready replicas.
+func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Workload(
+	ctx context.Context,
+	server *keav1alpha1.KeaDhcp4Server,
+	component string,
+	pp dhcp4PodParams,
+	replicas *int32,
+	configHash string,
+	secretEnvVars []corev1.EnvVar,
+	storkAgent *resources.StorkSidecarParams,
+	haEnabled bool,
+) (int32, error) {
+	if haEnabled {
+		return r.reconcileDhcp4HAWorkload(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent)
+	}
+	return r.reconcileDhcp4Deployment(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent)
+}
+
+// reconcileDhcp4HAWorkload reconciles the headless Service, per-pod Services and
+// StatefulSet for HA mode, returning the ready replica count.
+func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
+	ctx context.Context,
+	server *keav1alpha1.KeaDhcp4Server,
+	component string,
+	pp dhcp4PodParams,
+	replicas *int32,
+	configHash string,
+	secretEnvVars []corev1.EnvVar,
+	storkAgent *resources.StorkSidecarParams,
+) (int32, error) {
+	var readyReplicas int32
+
+	// HA mode: create headless Service + StatefulSet.
+	haPort := int32(8000)
+	if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketPort != nil {
+		haPort = *server.Spec.ControlSocket.SocketPort
+	}
+
+	// Headless Service for StatefulSet DNS.
+	hlSvc := resources.BuildHeadlessService(resources.ServiceParams{
+		Namespace: server.Namespace,
+		CRName:    server.Name,
+		Component: component,
+		Port:      haPort,
+		Protocol:  corev1.ProtocolTCP,
+	})
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, hlSvc); err != nil {
+		return readyReplicas, fmt.Errorf("reconciling headless Service: %w", err)
+	}
+
+	// Build per-ordinal ConfigMap name map.
+	cmNames := make(map[int]string, int(*replicas))
+	for i := int32(0); i < *replicas; i++ {
+		cmNames[int(i)] = resources.HAConfigMapName(server.Name, component, int(i))
+	}
+
+	// Create per-pod Services with stable ClusterIPs for HA peer communication.
+	// The headless Service resolves to ephemeral pod IPs, but per-pod Services
+	// have stable ClusterIPs that survive pod restarts.
+	svcParams := resources.ServiceParams{
+		Namespace: server.Namespace,
+		CRName:    server.Name,
+		Component: component,
+		Port:      haPort,
+		Protocol:  corev1.ProtocolTCP,
+	}
+	for i := int32(0); i < *replicas; i++ {
+		perPodSvc := resources.BuildPerPodService(svcParams, int(i))
+		if err := reconcileResource(ctx, r.Client, r.Scheme, server, perPodSvc); err != nil {
+			return readyReplicas, fmt.Errorf("reconciling per-pod Service for ordinal %d: %w", i, err)
+		}
+	}
+
+	// Build a mapping from headless hostnames (in the config) to per-pod Service
+	// hostnames (with stable ClusterIPs). The init container resolves the Service
+	// DNS and replaces the headless hostname in the config.
+	peerHostnameMap := make(map[string]string)
+	for i, peer := range server.Spec.HighAvailability.Peers {
+		u, err := url.Parse(peer.URL)
+		if err != nil {
+			continue
+		}
+		headlessHostname := u.Hostname()
+		if err := resources.ValidateHostname(headlessHostname); err != nil {
+			return readyReplicas, fmt.Errorf("HA peer %d URL: %w", i, err)
+		}
+		perPodSvcName := resources.PerPodServiceName(server.Name, component, i)
+		perPodSvcHostname := fmt.Sprintf("%s.%s.svc.cluster.local", perPodSvcName, server.Namespace)
+		peerHostnameMap[headlessHostname] = perPodSvcHostname
+	}
+
+	// Build peer address map from HA peer specs.
+	peerAddresses := make(map[int]string)
+	for i, peer := range server.Spec.HighAvailability.Peers {
+		if peer.Address != "" {
+			peerAddresses[i] = peer.Address
+		}
+	}
+
+	sp := resources.StatefulSetParams{
+		Namespace:          server.Namespace,
+		CRName:             server.Name,
+		Component:          component,
+		Command:            resources.DefaultCommandForComponent(component),
+		ConfigFileName:     resources.ConfigFileName(component),
+		Image:              pp.image,
+		ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
+		Replicas:           replicas,
+		Resources:          server.Spec.Container.Resources,
+		HostNetwork:        pp.hostNetwork,
+		NodeSelector:       pp.nodeSelector,
+		Tolerations:        pp.tolerations,
+		Affinity:           pp.affinity,
+		TLSSecretName:      pp.tlsSecretName,
+		ServiceAccountName: resources.ServiceAccountName(server.Name),
+		ConfigHash:         configHash,
+		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
+		PodAnnotations:     pp.podAnnotations,
+		ConfigMapNames:     cmNames,
+		PeerHostnameMap:    peerHostnameMap,
+		NADInterface:       nadInterface(server),
+		NADSubnet:          nadSubnet(server),
+		PeerAddresses:      peerAddresses,
+		StorkAgent:         storkAgent,
+		SecretEnvVars:      secretEnvVars,
+	}
+	sts := resources.BuildStatefulSet(sp)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, sts); err != nil {
+		return readyReplicas, fmt.Errorf("reconciling StatefulSet: %w", err)
+	}
+
+	// Get ready replicas from StatefulSet.
+	currentSTS := &appsv1.StatefulSet{}
+	stsKey := types.NamespacedName{
+		Name:      resources.StatefulSetName(server.Name, component),
+		Namespace: server.Namespace,
+	}
+	if err := r.Get(ctx, stsKey, currentSTS); err == nil {
+		readyReplicas = currentSTS.Status.ReadyReplicas
+	}
+	return readyReplicas, nil
+}
+
+// reconcileDhcp4Deployment reconciles the standard (non-HA) Deployment workload,
+// returning the ready replica count.
+func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
+	ctx context.Context,
+	server *keav1alpha1.KeaDhcp4Server,
+	component string,
+	pp dhcp4PodParams,
+	replicas *int32,
+	configHash string,
+	secretEnvVars []corev1.EnvVar,
+	storkAgent *resources.StorkSidecarParams,
+) (int32, error) {
+	var readyReplicas int32
+
+	// Standard mode: Deployment.
+	dp := resources.DeploymentParams{
+		Namespace:          server.Namespace,
+		CRName:             server.Name,
+		Component:          component,
+		Command:            resources.DefaultCommandForComponent(component),
+		ConfigFileName:     resources.ConfigFileName(component),
+		ConfigMapName:      resources.ConfigMapName(server.Name, component),
+		Image:              pp.image,
+		ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
+		Replicas:           replicas,
+		Resources:          server.Spec.Container.Resources,
+		HostNetwork:        pp.hostNetwork,
+		NodeSelector:       pp.nodeSelector,
+		Tolerations:        pp.tolerations,
+		Affinity:           pp.affinity,
+		TLSSecretName:      pp.tlsSecretName,
+		ServiceAccountName: resources.ServiceAccountName(server.Name),
+		ConfigHash:         configHash,
+		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
+		PodAnnotations:     pp.podAnnotations,
+		NADInterface:       nadInterface(server),
+		NADSubnet:          nadSubnet(server),
+		StorkAgent:         storkAgent,
+		SecretEnvVars:      secretEnvVars,
+	}
+	deploy := resources.BuildDeployment(dp)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
+		return readyReplicas, fmt.Errorf("reconciling Deployment: %w", err)
+	}
+
+	currentDeploy := &appsv1.Deployment{}
+	deployKey := types.NamespacedName{
+		Name:      resources.DeploymentName(server.Name, component),
+		Namespace: server.Namespace,
+	}
+	if err := r.Get(ctx, deployKey, currentDeploy); err == nil {
+		readyReplicas = currentDeploy.Status.ReadyReplicas
+	}
+	return readyReplicas, nil
+}
+
+// reconcileDhcp4ControlService reconciles the control-socket Service when the
+// control socket uses HTTP.
+func (r *KeaDhcp4ServerReconciler) reconcileDhcp4ControlService(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component string) error {
+	if server.Spec.ControlSocket == nil || server.Spec.ControlSocket.SocketType != "http" {
+		return nil
+	}
+	port := int32(8000)
+	if server.Spec.ControlSocket.SocketPort != nil {
+		port = *server.Spec.ControlSocket.SocketPort
+	}
+	svc := resources.BuildService(resources.ServiceParams{
+		Namespace: server.Namespace,
+		CRName:    server.Name,
+		Component: component,
+		Port:      port,
+		Protocol:  corev1.ProtocolTCP,
+	})
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, svc); err != nil {
+		return fmt.Errorf("reconciling Service: %w", err)
+	}
+	return nil
+}
+
+// reconcileDhcp4StorkMonitoring reconciles the PodMonitor, Stork metrics Service
+// and (on OpenShift) the metrics Route when the Stork agent is enabled.
+func (r *KeaDhcp4ServerReconciler) reconcileDhcp4StorkMonitoring(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component string, storkAgent *resources.StorkSidecarParams) error {
+	if storkAgent == nil {
+		return nil
+	}
+	logger := log.FromContext(ctx)
+
+	pm := resources.BuildPodMonitor(server.Namespace, server.Name, component)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, pm); err != nil {
+		logger.Error(err, "failed to reconcile PodMonitor (monitoring.coreos.com CRD may not be installed)")
+	}
+
+	storkSvc := resources.BuildStorkMetricsService(resources.StorkMetricsServiceParams{
+		Namespace:      server.Namespace,
+		CRName:         server.Name,
+		Component:      component,
+		AgentPort:      storkAgent.Port,
+		PrometheusPort: storkAgent.PrometheusPort,
+	})
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, storkSvc); err != nil {
+		return fmt.Errorf("reconciling Stork metrics Service: %w", err)
+	}
+
+	// On OpenShift, create a Route for the Stork Prometheus metrics endpoint.
+	if r.IsOpenShift {
+		route := resources.BuildStorkMetricsRoute(resources.StorkRouteParams{
+			Namespace:      server.Namespace,
+			CRName:         server.Name,
+			Component:      component,
+			PrometheusPort: storkAgent.PrometheusPort,
+		})
+		if err := reconcileRoute(ctx, r.Client, r.Scheme, server, route); err != nil {
+			logger.Error(err, "failed to reconcile Stork metrics Route")
+		}
+	}
+	return nil
+}
+
+// updateDhcp4Status updates the CR status (replicas, hash, conditions, phase).
+func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component, configHash string, readyReplicas int32, replicas *int32) error {
 	server.Status.ReadyReplicas = readyReplicas
 	server.Status.ConfigHash = configHash
 	server.Status.ConfigMapRef = resources.ConfigMapName(server.Name, component)
@@ -429,23 +536,20 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	server.Status.NADAddresses = computeNADAddresses(nadSubnet(server), int(*replicas))
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
-		server.Status.Phase = "Running"
+		server.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "DeploymentReady", "All replicas are ready")
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "Deployment is complete")
 	} else {
-		server.Status.Phase = "Progressing"
+		server.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "DeploymentProgressing",
 			fmt.Sprintf("%d/%d replicas ready", readyReplicas, *replicas))
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "DeploymentProgressing", "Waiting for replicas")
 	}
 
 	if err := r.Status().Update(ctx, server); err != nil {
-		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
+		return fmt.Errorf("updating status: %w", err)
 	}
-
-	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaDhcp4Server")
-
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // reconcileHAConfigs creates per-ordinal ConfigMaps for HA mode and returns
@@ -554,4 +658,3 @@ func computeNADAddresses(subnetCIDR string, replicas int) []string {
 	}
 	return addrs
 }
-

@@ -49,10 +49,10 @@ const (
 
 // defaultComponentImage maps a component name to its default container image.
 var defaultComponentImage = map[string]string{
-	"dhcp4":      DefaultKeaDhcp4Image,
-	"dhcp6":      DefaultKeaDhcp6Image,
-	"ctrl-agent": DefaultKeaCtrlAgentImage,
-	"ddns":       DefaultKeaDhcpDdnsImage,
+	ComponentDhcp4:     DefaultKeaDhcp4Image,
+	ComponentDhcp6:     DefaultKeaDhcp6Image,
+	ComponentCtrlAgent: DefaultKeaCtrlAgentImage,
+	ComponentDdns:      DefaultKeaDhcpDdnsImage,
 }
 
 // defaultComponentCommand maps a component name to the absolute path of the
@@ -60,10 +60,10 @@ var defaultComponentImage = map[string]string{
 // the stork-agent sidecar to detect Kea daemons via /proc without needing
 // to resolve the process's current working directory (which requires SYS_PTRACE).
 var defaultComponentCommand = map[string]string{
-	"dhcp4":      "/usr/sbin/kea-dhcp4",
-	"dhcp6":      "/usr/sbin/kea-dhcp6",
-	"ctrl-agent": "/usr/sbin/kea-ctrl-agent",
-	"ddns":       "/usr/sbin/kea-dhcp-ddns",
+	ComponentDhcp4:     "/usr/sbin/kea-dhcp4",
+	ComponentDhcp6:     "/usr/sbin/kea-dhcp6",
+	ComponentCtrlAgent: "/usr/sbin/kea-ctrl-agent",
+	ComponentDdns:      "/usr/sbin/kea-dhcp-ddns",
 }
 
 // DefaultImageForComponent returns the default container image for the given
@@ -218,7 +218,7 @@ func BuildDeployment(p DeploymentParams) *appsv1.Deployment {
 	}
 	securityContext := &corev1.SecurityContext{
 		Capabilities: &corev1.Capabilities{
-			Drop: []corev1.Capability{"ALL"},
+			Drop: []corev1.Capability{capabilityAll},
 			Add:  addCaps,
 		},
 	}

@@ -26,7 +26,7 @@ import (
 func TestCtrlAgentMinimalConfig(t *testing.T) {
 	httpPort := int32(8000)
 	spec := &keav1alpha1.KeaControlAgentSpec{
-		HTTPHost: "0.0.0.0",
+		HTTPHost: listenAnyIP4,
 		HTTPPort: &httpPort,
 	}
 	renderer := NewCtrlAgentConfigRenderer(spec)
@@ -46,7 +46,7 @@ func TestCtrlAgentMinimalConfig(t *testing.T) {
 		t.Fatal("expected 'Control-agent' root key in JSON output")
 	}
 
-	if agent["http-host"] != "0.0.0.0" {
+	if agent["http-host"] != listenAnyIP4 {
 		t.Errorf("expected http-host '0.0.0.0', got %v", agent["http-host"])
 	}
 	if int32(agent["http-port"].(float64)) != 8000 {
@@ -54,7 +54,7 @@ func TestCtrlAgentMinimalConfig(t *testing.T) {
 	}
 
 	// Should not have optional sections
-	for _, key := range []string{"control-sockets", "authentication", "hooks-libraries"} {
+	for _, key := range []string{"control-sockets", "authentication", testHooksLibrariesK} {
 		if _, ok := agent[key]; ok {
 			t.Errorf("expected key %q not to be set in minimal config", key)
 		}
@@ -65,15 +65,15 @@ func TestCtrlAgentWithControlSockets(t *testing.T) {
 	httpPort := int32(8000)
 	d2Port := int32(8003)
 	spec := &keav1alpha1.KeaControlAgentSpec{
-		HTTPHost: "127.0.0.1",
+		HTTPHost: testLoopbackIP,
 		HTTPPort: &httpPort,
 		ControlSockets: &keav1alpha1.AgentControlSockets{
 			Dhcp4: &keav1alpha1.ControlSocket{
-				SocketType: "unix",
-				SocketName: "/run/kea/kea4-ctrl-socket",
+				SocketType: testSocketTypeUnix,
+				SocketName: testCtrlSocketPath,
 			},
 			Dhcp6: &keav1alpha1.ControlSocket{
-				SocketType: "unix",
+				SocketType: testSocketTypeUnix,
 				SocketName: "/run/kea/kea6-ctrl-socket",
 			},
 			D2: &keav1alpha1.ControlSocket{
@@ -105,10 +105,10 @@ func TestCtrlAgentWithControlSockets(t *testing.T) {
 	if !ok {
 		t.Fatal("expected dhcp4 control socket")
 	}
-	if dhcp4Sock["socket-type"] != "unix" {
+	if dhcp4Sock["socket-type"] != testSocketTypeUnix {
 		t.Errorf("expected dhcp4 socket-type 'unix', got %v", dhcp4Sock["socket-type"])
 	}
-	if dhcp4Sock["socket-name"] != "/run/kea/kea4-ctrl-socket" {
+	if dhcp4Sock["socket-name"] != testCtrlSocketPath {
 		t.Errorf("expected dhcp4 socket-name '/run/kea/kea4-ctrl-socket', got %v", dhcp4Sock["socket-name"])
 	}
 
@@ -117,7 +117,7 @@ func TestCtrlAgentWithControlSockets(t *testing.T) {
 	if !ok {
 		t.Fatal("expected dhcp6 control socket")
 	}
-	if dhcp6Sock["socket-type"] != "unix" {
+	if dhcp6Sock["socket-type"] != testSocketTypeUnix {
 		t.Errorf("expected dhcp6 socket-type 'unix', got %v", dhcp6Sock["socket-type"])
 	}
 
@@ -137,17 +137,17 @@ func TestCtrlAgentWithControlSockets(t *testing.T) {
 func TestCtrlAgentWithAuth(t *testing.T) {
 	httpPort := int32(8000)
 	spec := &keav1alpha1.KeaControlAgentSpec{
-		HTTPHost: "0.0.0.0",
+		HTTPHost: listenAnyIP4,
 		HTTPPort: &httpPort,
 		Authentication: &keav1alpha1.AuthConfig{
 			Type:  "basic",
 			Realm: "kea-control-agent",
 			Clients: []keav1alpha1.AuthClient{
 				{
-					User: "admin",
+					User: testUserAdmin,
 				},
 				{
-					User: "readonly",
+					User: testRoleReadonly,
 				},
 			},
 		},
@@ -155,8 +155,8 @@ func TestCtrlAgentWithAuth(t *testing.T) {
 
 	renderer := NewCtrlAgentConfigRenderer(spec)
 	renderer.ResolvedAuthPasswords = map[string]string{
-		"admin":    "admin-password",
-		"readonly": "readonly-password",
+		testUserAdmin:    "admin-password",
+		testRoleReadonly: "readonly-password",
 	}
 	data, err := renderer.RenderJSON()
 	if err != nil {
@@ -190,7 +190,7 @@ func TestCtrlAgentWithAuth(t *testing.T) {
 	}
 
 	client0 := clients[0].(map[string]interface{})
-	if client0["user"] != "admin" {
+	if client0["user"] != testUserAdmin {
 		t.Errorf("expected first client user 'admin', got %v", client0["user"])
 	}
 	if client0["password"] != "admin-password" {
@@ -198,7 +198,7 @@ func TestCtrlAgentWithAuth(t *testing.T) {
 	}
 
 	client1 := clients[1].(map[string]interface{})
-	if client1["user"] != "readonly" {
+	if client1["user"] != testRoleReadonly {
 		t.Errorf("expected second client user 'readonly', got %v", client1["user"])
 	}
 }

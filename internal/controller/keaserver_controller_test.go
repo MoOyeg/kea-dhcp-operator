@@ -36,7 +36,7 @@ func TestIsChildReady(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		ready := r.isChildReady(context.Background(), "default", "nonexistent", &keav1alpha1.KeaDhcp4Server{})
+		ready := r.isChildReady(context.Background(), testNamespaceDefault, "nonexistent", &keav1alpha1.KeaDhcp4Server{})
 		if ready {
 			t.Error("expected false for non-existent child")
 		}
@@ -44,15 +44,15 @@ func TestIsChildReady(t *testing.T) {
 
 	t.Run("returns false when phase is Progressing", func(t *testing.T) {
 		child := &keav1alpha1.KeaDhcp4Server{
-			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: testNamespaceDefault},
 			Status: keav1alpha1.KeaDhcp4ServerStatus{
-				ComponentStatus: keav1alpha1.ComponentStatus{Phase: "Progressing"},
+				ComponentStatus: keav1alpha1.ComponentStatus{Phase: keav1alpha1.PhaseProgressing},
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
 		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		ready := r.isChildReady(context.Background(), "default", "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
+		ready := r.isChildReady(context.Background(), testNamespaceDefault, "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
 		if ready {
 			t.Error("expected false for Progressing phase")
 		}
@@ -60,12 +60,12 @@ func TestIsChildReady(t *testing.T) {
 
 	t.Run("returns true when phase is Running and Ready condition True", func(t *testing.T) {
 		child := &keav1alpha1.KeaDhcp4Server{
-			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp4-child", Namespace: testNamespaceDefault},
 			Status: keav1alpha1.KeaDhcp4ServerStatus{
 				ComponentStatus: keav1alpha1.ComponentStatus{
-					Phase: "Running",
+					Phase: keav1alpha1.PhaseRunning,
 					Conditions: []keav1alpha1.ConditionStatus{
-						{Type: keav1alpha1.ConditionTypeReady, Status: "True"},
+						{Type: keav1alpha1.ConditionTypeReady, Status: keav1alpha1.ConditionStatusTrue},
 					},
 				},
 			},
@@ -73,7 +73,7 @@ func TestIsChildReady(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
 		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		ready := r.isChildReady(context.Background(), "default", "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
+		ready := r.isChildReady(context.Background(), testNamespaceDefault, "dhcp4-child", &keav1alpha1.KeaDhcp4Server{})
 		if !ready {
 			t.Error("expected true for Running phase with Ready=True condition")
 		}
@@ -81,10 +81,10 @@ func TestIsChildReady(t *testing.T) {
 
 	t.Run("returns false when phase is Running but Ready condition False", func(t *testing.T) {
 		child := &keav1alpha1.KeaDhcp6Server{
-			ObjectMeta: metav1.ObjectMeta{Name: "dhcp6-child", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "dhcp6-child", Namespace: testNamespaceDefault},
 			Status: keav1alpha1.KeaDhcp6ServerStatus{
 				ComponentStatus: keav1alpha1.ComponentStatus{
-					Phase: "Running",
+					Phase: keav1alpha1.PhaseRunning,
 					Conditions: []keav1alpha1.ConditionStatus{
 						{Type: keav1alpha1.ConditionTypeReady, Status: "False"},
 					},
@@ -94,7 +94,7 @@ func TestIsChildReady(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
 		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		ready := r.isChildReady(context.Background(), "default", "dhcp6-child", &keav1alpha1.KeaDhcp6Server{})
+		ready := r.isChildReady(context.Background(), testNamespaceDefault, "dhcp6-child", &keav1alpha1.KeaDhcp6Server{})
 		if ready {
 			t.Error("expected false for Running phase with Ready=False condition")
 		}
@@ -102,15 +102,15 @@ func TestIsChildReady(t *testing.T) {
 
 	t.Run("returns true when phase is Running with no conditions (backward compat)", func(t *testing.T) {
 		child := &keav1alpha1.KeaControlAgent{
-			ObjectMeta: metav1.ObjectMeta{Name: "ca-child", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "ca-child", Namespace: testNamespaceDefault},
 			Status: keav1alpha1.KeaControlAgentStatus{
-				ComponentStatus: keav1alpha1.ComponentStatus{Phase: "Running"},
+				ComponentStatus: keav1alpha1.ComponentStatus{Phase: keav1alpha1.PhaseRunning},
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(child).WithObjects(child).Build()
 		r := &KeaServerReconciler{Client: c, Scheme: scheme}
 
-		ready := r.isChildReady(context.Background(), "default", "ca-child", &keav1alpha1.KeaControlAgent{})
+		ready := r.isChildReady(context.Background(), testNamespaceDefault, "ca-child", &keav1alpha1.KeaControlAgent{})
 		if !ready {
 			t.Error("expected true for Running phase with no conditions (backward compat)")
 		}

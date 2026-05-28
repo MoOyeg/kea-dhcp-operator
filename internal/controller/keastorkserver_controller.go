@@ -76,7 +76,7 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: server.Spec.Database.CredentialsSecretRef,
-					Key:                  "username",
+					Key:                  secretKeyUsername,
 				},
 			},
 		},
@@ -85,7 +85,7 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: server.Spec.Database.CredentialsSecretRef,
-					Key:                  "password",
+					Key:                  secretKeyPassword,
 				},
 			},
 		},
@@ -242,11 +242,11 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	server.Status.ServerTokenSecretName = tokenSecretName
 
 	if readyReplicas > 0 && readyReplicas == replicas {
-		server.Status.Phase = "Running"
+		server.Status.Phase = keav1alpha1.PhaseRunning
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "True", "DeploymentReady", "All replicas are ready")
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "False", "DeploymentComplete", "Deployment is complete")
 	} else {
-		server.Status.Phase = "Progressing"
+		server.Status.Phase = keav1alpha1.PhaseProgressing
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", "DeploymentProgressing",
 			fmt.Sprintf("%d/%d replicas ready", readyReplicas, replicas))
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeProgressing, "True", "DeploymentProgressing", "Waiting for replicas")
@@ -302,9 +302,9 @@ func (r *KeaStorkServerReconciler) getRouteURL(ctx context.Context, namespace, n
 
 // unstructuredNestedString extracts a nested string from an unstructured object.
 func unstructuredNestedString(obj map[string]interface{}, fields ...string) (string, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return "", found, err
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return "", found, nil
 	}
 	s, ok := val.(string)
 	if !ok {
@@ -315,9 +315,9 @@ func unstructuredNestedString(obj map[string]interface{}, fields ...string) (str
 
 // unstructuredNestedSlice extracts a nested slice from an unstructured object.
 func unstructuredNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool, error) {
-	val, found, err := nestedField(obj, fields...)
-	if !found || err != nil {
-		return nil, found, err
+	val, found := nestedField(obj, fields...)
+	if !found {
+		return nil, found, nil
 	}
 	s, ok := val.([]interface{})
 	if !ok {
@@ -327,19 +327,19 @@ func unstructuredNestedSlice(obj map[string]interface{}, fields ...string) ([]in
 }
 
 // nestedField walks a nested map to extract a value.
-func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+func nestedField(obj map[string]interface{}, fields ...string) (interface{}, bool) {
 	var val interface{} = obj
 	for _, field := range fields {
 		m, ok := val.(map[string]interface{})
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 		val, ok = m[field]
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 	}
-	return val, true, nil
+	return val, true
 }
 
 // SetupWithManager sets up the controller with the Manager.
