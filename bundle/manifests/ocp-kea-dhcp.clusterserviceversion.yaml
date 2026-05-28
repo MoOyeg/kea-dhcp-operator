@@ -456,7 +456,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.26
-    createdAt: "2026-05-28T14:26:22Z"
+    createdAt: "2026-05-28T15:56:55Z"
     description: Manages ISC Kea DHCP servers on Kubernetes and OpenShift
     support: moyegunl@redhat.com
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
@@ -780,10 +780,10 @@ spec:
                 resources:
                   limits:
                     cpu: 500m
-                    memory: 128Mi
+                    memory: 512Mi
                   requests:
                     cpu: 10m
-                    memory: 64Mi
+                    memory: 128Mi
                 securityContext:
                   allowPrivilegeEscalation: false
                   capabilities:
