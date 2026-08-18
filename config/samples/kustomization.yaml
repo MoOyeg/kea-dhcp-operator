@@ -6,4 +6,5 @@ resources:
 - kea_v1alpha1_keadhcpddns.yaml
 - kea_v1alpha1_keaserver.yaml
 - kea_v1alpha1_keadhcp4server_ha.yaml
+- kea_v1alpha1_keastorkserver.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

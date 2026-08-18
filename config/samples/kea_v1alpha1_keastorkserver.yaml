@@ -1,0 +1,17 @@
+apiVersion: kea.openshift.io/v1alpha1
+kind: KeaStorkServer
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: ocp-kea-dhcp
+  name: stork-example
+spec:
+  database:
+    host: postgres.example.svc.cluster.local
+    port: 5432
+    name: stork
+    credentialsSecretRef:
+      name: stork-db-credentials
+    sslMode: disable
+  port: 8080
+  enableMetrics: true

@@ -257,11 +257,13 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.21
+    com.redhat.openshift.versions: v4.18
+    containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.30
     description: Manages ISC Kea DHCP servers on Kubernetes and OpenShift
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/MoOyeg/kea-dhcp-operator
+    support: moyegunl@redhat.com
   name: ocp-kea-dhcp.v0.0.3
   namespace: placeholder
 spec:
