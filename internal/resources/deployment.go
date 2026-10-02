@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -253,6 +254,11 @@ ip_last=$((d + 2)); `+
 		mainCmd = buildSecretEnvSubstCommand(p.SecretEnvVars, mainCmd)
 	}
 
+	// Kea 3.0 rejects a world-writable control-socket directory, and a fresh
+	// emptyDir is 0777. The StatefulSet path fixes this in its init container;
+	// the Deployment has none, so tighten the permissions before exec'ing Kea.
+	mainCmd = withRunDirPermissions(mainCmd)
+
 	container := corev1.Container{
 		Name:            p.Component,
 		Image:           image,
@@ -307,6 +313,18 @@ ip_last=$((d + 2)); `+
 	}
 
 	return deploy
+}
+
+// withRunDirPermissions prefixes the container command with a chmod of the
+// control-socket directory. An existing "sh -c" script is prefixed in place;
+// any other command is wrapped in "sh -c" and exec'd so the Kea binary
+// replaces the shell (stork-agent detects Kea by its absolute binary path).
+func withRunDirPermissions(cmd []string) []string {
+	chmod := fmt.Sprintf("chmod 750 %s; ", RunMountPath)
+	if len(cmd) == 3 && cmd[0] == "sh" && cmd[1] == "-c" {
+		return []string{"sh", "-c", chmod + cmd[2]}
+	}
+	return []string{"sh", "-c", chmod + "exec " + strings.Join(cmd, " ")}
 }
 
 // buildSecretEnvSubstCommand builds a shell command that:
