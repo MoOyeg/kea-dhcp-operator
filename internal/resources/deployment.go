@@ -275,7 +275,7 @@ ip_last=$((d + 2)); `+
 	// Stork agent sidecar: shares PID namespace and config volume.
 	var shareProcessNamespace *bool
 	if p.StorkAgent != nil {
-		storkContainer := buildStorkAgentContainer(p.StorkAgent, ConfigVolumeName)
+		storkContainer := buildStorkAgentContainer(p.StorkAgent, ConfigVolumeName, addCaps)
 		containers = append(containers, storkContainer)
 		t := true
 		shareProcessNamespace = &t

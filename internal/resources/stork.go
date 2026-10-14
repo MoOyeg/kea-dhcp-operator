@@ -81,7 +81,13 @@ func ResolveStorkParams(cfg *keav1alpha1.StorkAgentConfig, serverToken string) (
 // buildStorkAgentContainer creates the stork-agent sidecar container.
 // It shares the Kea config volume (read-only) so the agent can discover Kea
 // by reading the config file path from the process command line.
-func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) corev1.Container {
+//
+// keaCaps must be the capabilities added to the Kea container in the same pod.
+// The agent inspects the Kea process via /proc (e.g. /proc/<pid>/cwd), and the
+// kernel only allows that without CAP_SYS_PTRACE when the observer's permitted
+// capabilities are a superset of the target's. Without them every detection
+// cycle logs "readlink /proc/<pid>/cwd: permission denied".
+func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string, keaCaps []corev1.Capability) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: "STORK_AGENT_PORT", Value: fmt.Sprintf("%d", sp.Port)},
 		{Name: "STORK_AGENT_PROMETHEUS_KEA_EXPORTER_PORT", Value: fmt.Sprintf("%d", sp.PrometheusPort)},
@@ -146,6 +152,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{capabilityAll},
+				Add:  append([]corev1.Capability(nil), keaCaps...),
 			},
 		},
 	}

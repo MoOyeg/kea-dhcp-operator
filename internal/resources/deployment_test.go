@@ -26,6 +26,8 @@ import (
 const (
 	testCRName    = "test"
 	testNamespace = "default"
+	testNADSubnet = "10.200.0.0/24"
+	testNADIface  = "net1"
 )
 
 func TestBuildDeploymentDefaultImages(t *testing.T) {
@@ -123,12 +125,12 @@ func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 			wantSuffix: "exec /usr/sbin/kea-ctrl-agent -c /etc/kea/kea-ctrl-agent.conf"},
 		{name: "ddns plain", component: ComponentDdns,
 			wantSuffix: "exec /usr/sbin/kea-dhcp-ddns -c /etc/kea/kea-ddns.conf"},
-		{name: "dhcp4 with NAD", component: ComponentDhcp4, nadIface: "net1", nadSubnet: "10.200.0.0/24",
+		{name: "dhcp4 with NAD", component: ComponentDhcp4, nadIface: testNADIface, nadSubnet: testNADSubnet,
 			wantSuffix: dhcp4Exec},
 		{name: "dhcp4 with secret env vars", component: ComponentDhcp4, secretEnv: secretEnv,
 			wantSuffix: dhcp4Exec},
 		{name: "dhcp4 with NAD and secret env vars", component: ComponentDhcp4,
-			nadIface: "net1", nadSubnet: "10.200.0.0/24", secretEnv: secretEnv,
+			nadIface: testNADIface, nadSubnet: testNADSubnet, secretEnv: secretEnv,
 			wantSuffix: "/etc/kea/kea-dhcp4.conf"},
 	}
 	for _, tc := range tests {
