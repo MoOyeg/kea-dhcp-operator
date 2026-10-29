@@ -114,7 +114,7 @@ type InterfacesConfig struct {
 	// List of interface names or interface/address pairs to listen on.
 	// Interface names must contain only alphanumeric characters, hyphens, underscores, dots, or slashes.
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:items:Pattern=`^[a-zA-Z0-9._/-]+$`
+	// +kubebuilder:validation:items:Pattern=`^[a-zA-Z0-9._/-:]+$`
 	Interfaces []string `json:"interfaces"`
 
 	// DHCP socket type: "raw" for raw sockets or "udp" for UDP sockets.
