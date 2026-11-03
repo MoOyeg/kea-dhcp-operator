@@ -456,7 +456,7 @@ metadata:
     categories: Networking
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/mooyeg/ocp-kea-dhcp:v0.0.34
-    createdAt: "2026-11-03T19:19:18Z"
+    createdAt: "2026-11-03T22:48:43Z"
     description: Manages ISC Kea DHCP servers on Kubernetes and OpenShift
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -602,6 +602,14 @@ spec:
           verbs:
           - create
           - get
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - get
+          - list
+          - watch
         - apiGroups:
           - ""
           resources:
