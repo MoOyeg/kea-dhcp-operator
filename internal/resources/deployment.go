@@ -294,7 +294,7 @@ ip_last=$((d + 2)); `+
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
+					Labels:      podTemplateLabels(labels, p.StorkAgent),
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{

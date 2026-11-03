@@ -363,7 +363,11 @@ ip_last=$((d + ordinal + 2)); `+
 	// Stork agent sidecar: shares PID namespace and reads active config.
 	var shareProcessNamespace *bool
 	if p.StorkAgent != nil {
-		storkContainer := buildStorkAgentContainer(p.StorkAgent, ActiveConfigVolumeName, addCaps)
+		// StatefulSet pods have stable DNS names through the headless Service,
+		// so register the agent under that name rather than the pod IP.
+		sp := *p.StorkAgent
+		sp.AgentDomain = fmt.Sprintf("%s.%s.svc.cluster.local", HeadlessServiceName(p.CRName, p.Component), p.Namespace)
+		storkContainer := buildStorkAgentContainer(&sp, ActiveConfigVolumeName, addCaps)
 		containers = append(containers, storkContainer)
 		t := true
 		shareProcessNamespace = &t
@@ -412,7 +416,7 @@ ip_last=$((d + ordinal + 2)); `+
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
+					Labels:      podTemplateLabels(labels, p.StorkAgent),
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{

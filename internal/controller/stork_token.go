@@ -35,22 +35,9 @@ type storkTokenFetcher func(ctx context.Context, baseURL, username, password str
 // token itself and keeps it in its database; it cannot be set from outside, so
 // the operator has to read it back rather than choose one.
 func fetchStorkServerToken(ctx context.Context, baseURL, username, password string) (string, error) {
-	jar, err := cookiejar.New(nil)
+	httpClient, err := storkLogin(ctx, baseURL, username, password)
 	if err != nil {
-		return "", fmt.Errorf("creating cookie jar: %w", err)
-	}
-	httpClient := &http.Client{Jar: jar, Timeout: 10 * time.Second}
-
-	login, err := json.Marshal(map[string]string{
-		"authenticationMethodId": "internal",
-		"identifier":             username,
-		"secret":                 password,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encoding login request: %w", err)
-	}
-	if _, err := storkRequest(ctx, httpClient, http.MethodPost, baseURL+"/api/sessions", login); err != nil {
-		return "", fmt.Errorf("logging into Stork server: %w", err)
+		return "", err
 	}
 
 	body, err := storkRequest(ctx, httpClient, http.MethodGet, baseURL+"/api/machines-server-token", nil)
@@ -67,6 +54,29 @@ func fetchStorkServerToken(ctx context.Context, baseURL, username, password stri
 		return "", fmt.Errorf("stork server returned an empty token")
 	}
 	return resp.Token, nil
+}
+
+// storkLogin opens a session on the Stork REST API with the internal
+// authentication method and returns a client that carries the session cookie.
+func storkLogin(ctx context.Context, baseURL, username, password string) (*http.Client, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating cookie jar: %w", err)
+	}
+	httpClient := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+
+	login, err := json.Marshal(map[string]string{
+		"authenticationMethodId": "internal",
+		"identifier":             username,
+		"secret":                 password,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding login request: %w", err)
+	}
+	if _, err := storkRequest(ctx, httpClient, http.MethodPost, baseURL+"/api/sessions", login); err != nil {
+		return nil, fmt.Errorf("logging into Stork server: %w", err)
+	}
+	return httpClient, nil
 }
 
 // storkRequest sends one request to the Stork REST API and returns the body of

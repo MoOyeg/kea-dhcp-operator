@@ -42,7 +42,7 @@ func TestBuildStatefulSet_Deterministic(t *testing.T) {
 		return StatefulSetParams{
 			CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-			ConfigMapNames:  map[int]string{0: "test-dhcp4-0", 1: "test-dhcp4-1"},
+			ConfigMapNames:  testSTSConfigMaps(),
 			PeerHostnameMap: peers, PeerAddresses: addrs,
 			NADInterface: testNADIface, NADSubnet: testNADSubnet,
 		}

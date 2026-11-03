@@ -31,6 +31,15 @@ const (
 	testStorkServerToken = "secret-token"
 )
 
+const (
+	testExternalStorkURL = "http://stork.example.com:8080"
+	testDeployConfigMap  = "test-dhcp4"
+	kindStatefulSet      = "statefulset"
+	kindDeployment       = "deployment"
+)
+
+func testSTSConfigMaps() map[int]string { return map[int]string{0: "test-dhcp4-0", 1: "test-dhcp4-1"} }
+
 func TestResolveStorkParams_NilConfig(t *testing.T) {
 	params, err := ResolveStorkParams(nil, "")
 	if err != nil {
@@ -77,7 +86,7 @@ func TestResolveStorkParams_CustomValues(t *testing.T) {
 		Image:          "custom-agent:v1",
 		Port:           &customPort,
 		PrometheusPort: &customPromPort,
-		ServerURL:      "http://stork.example.com:8080",
+		ServerURL:      testExternalStorkURL,
 	}
 	params, err := ResolveStorkParams(cfg, "my-token")
 	if err != nil {
@@ -92,7 +101,7 @@ func TestResolveStorkParams_CustomValues(t *testing.T) {
 	if params.PrometheusPort != 9999 {
 		t.Errorf("expected prom port 9999, got %d", params.PrometheusPort)
 	}
-	if params.ServerURL != "http://stork.example.com:8080" {
+	if params.ServerURL != testExternalStorkURL {
 		t.Errorf("expected server URL, got %q", params.ServerURL)
 	}
 	if params.ServerToken != "my-token" {
@@ -156,14 +165,14 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	}
 
 	// Should register with pod IP via downward API
-	hostEnv, ok := envMap["STORK_AGENT_HOST"]
+	hostEnv, ok := envMap[envStorkAgentHost]
 	if !ok {
 		t.Fatal("expected STORK_AGENT_HOST env var")
 	}
 	if hostEnv.ValueFrom == nil || hostEnv.ValueFrom.FieldRef == nil {
 		t.Fatal("expected STORK_AGENT_HOST to use fieldRef")
 	}
-	if hostEnv.ValueFrom.FieldRef.FieldPath != "status.podIP" {
+	if hostEnv.ValueFrom.FieldRef.FieldPath != fieldPathPodIP {
 		t.Errorf("expected fieldPath=status.podIP, got %q", hostEnv.ValueFrom.FieldRef.FieldPath)
 	}
 
@@ -175,6 +184,133 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	// Should NOT have prometheus-only mode
 	if _, ok := envMap["STORK_AGENT_LISTEN_PROMETHEUS_ONLY"]; ok {
 		t.Error("should not have STORK_AGENT_LISTEN_PROMETHEUS_ONLY when server URL is set")
+	}
+}
+
+// TestBuildStorkAgentContainer_StableAgentHost checks that, given a DNS suffix,
+// the agent registers under "<pod name>.<suffix>" instead of the pod IP, and
+// that POD_NAME comes before STORK_AGENT_HOST so the $(POD_NAME) reference expands.
+func TestBuildStorkAgentContainer_StableAgentHost(t *testing.T) {
+	const domain = "test-dhcp4-hl.kea-system.svc.cluster.local"
+	sp := &StorkSidecarParams{
+		Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547,
+		ServerURL: testStorkServerURL, ServerToken: testStorkServerToken, AgentDomain: domain,
+	}
+	c := buildStorkAgentContainer(sp, "kea-config", nil)
+
+	podNameIdx, hostIdx := -1, -1
+	for i, e := range c.Env {
+		switch e.Name {
+		case "POD_NAME":
+			podNameIdx = i
+			if e.ValueFrom == nil || e.ValueFrom.FieldRef == nil || e.ValueFrom.FieldRef.FieldPath != "metadata.name" {
+				t.Errorf("POD_NAME should come from metadata.name, got %+v", e)
+			}
+		case envStorkAgentHost:
+			hostIdx = i
+			if e.ValueFrom != nil {
+				t.Errorf("STORK_AGENT_HOST should be a literal, not a fieldRef: %+v", e.ValueFrom)
+			}
+			if want := "$(POD_NAME)." + domain; e.Value != want {
+				t.Errorf("STORK_AGENT_HOST = %q, want %q", e.Value, want)
+			}
+		}
+	}
+	if podNameIdx < 0 || hostIdx < 0 {
+		t.Fatalf("expected POD_NAME and STORK_AGENT_HOST, env = %+v", c.Env)
+	}
+	if podNameIdx > hostIdx {
+		t.Error("POD_NAME must be defined before STORK_AGENT_HOST for $(POD_NAME) to expand")
+	}
+}
+
+// TestBuildStatefulSet_StorkAgentHost checks that StatefulSet pods register
+// under their headless-Service DNS name, while Deployment pods (which have no
+// stable per-pod name) keep using the pod IP.
+func TestBuildStatefulSet_StorkAgentHost(t *testing.T) {
+	stork := &StorkSidecarParams{Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547,
+		ServerURL: testStorkServerURL, ServerToken: testStorkServerToken}
+	agentEnv := func(spec corev1.PodSpec) map[string]corev1.EnvVar {
+		for _, c := range spec.Containers {
+			if c.Name == StorkAgentContainerName {
+				m := map[string]corev1.EnvVar{}
+				for _, e := range c.Env {
+					m[e.Name] = e
+				}
+				return m
+			}
+		}
+		t.Fatal("no stork-agent container")
+		return nil
+	}
+
+	sts := BuildStatefulSet(StatefulSetParams{
+		CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+		Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+		ConfigMapNames: testSTSConfigMaps(), StorkAgent: stork,
+	})
+	want := "$(POD_NAME)." + HeadlessServiceName(testCRName, ComponentDhcp4) + "." + testNamespace + ".svc.cluster.local"
+	if got := agentEnv(sts.Spec.Template.Spec)[envStorkAgentHost].Value; got != want {
+		t.Errorf("statefulset STORK_AGENT_HOST = %q, want %q", got, want)
+	}
+	if sts.Spec.ServiceName != HeadlessServiceName(testCRName, ComponentDhcp4) {
+		t.Errorf("serviceName %q must match the agent's DNS suffix", sts.Spec.ServiceName)
+	}
+	if stork.AgentDomain != "" {
+		t.Error("BuildStatefulSet must not modify the caller's StorkSidecarParams")
+	}
+
+	dep := BuildDeployment(DeploymentParams{
+		CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+		Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+		ConfigMapName: testDeployConfigMap, StorkAgent: stork,
+	})
+	host := agentEnv(dep.Spec.Template.Spec)[envStorkAgentHost]
+	if host.ValueFrom == nil || host.ValueFrom.FieldRef == nil || host.ValueFrom.FieldRef.FieldPath != fieldPathPodIP {
+		t.Errorf("deployment STORK_AGENT_HOST should stay on status.podIP, got %+v", host)
+	}
+}
+
+// TestStorkServerPodLabel checks that agents reporting to an in-cluster
+// KeaStorkServer carry LabelStorkServer on the pod template only. The selector
+// must not change, because a StatefulSet's selector is immutable.
+func TestStorkServerPodLabel(t *testing.T) {
+	withServer := &StorkSidecarParams{Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547,
+		ServerURL: testStorkServerURL, ServerToken: testStorkServerToken, ServerName: "stork"}
+	external := &StorkSidecarParams{Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547,
+		ServerURL: testExternalStorkURL}
+
+	for _, tc := range []struct {
+		name      string
+		sp        *StorkSidecarParams
+		wantLabel string
+	}{
+		{"in-cluster server", withServer, "stork"},
+		{"external server", external, ""},
+		{"no stork", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sts := BuildStatefulSet(StatefulSetParams{
+				CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+				Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+				ConfigMapNames: testSTSConfigMaps(), StorkAgent: tc.sp,
+			})
+			dep := BuildDeployment(DeploymentParams{
+				CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+				Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+				ConfigMapName: testDeployConfigMap, StorkAgent: tc.sp,
+			})
+			for kind, tmpl := range map[string]map[string]string{kindStatefulSet: sts.Spec.Template.Labels, kindDeployment: dep.Spec.Template.Labels} {
+				if got := tmpl[LabelStorkServer]; got != tc.wantLabel {
+					t.Errorf("%s template label = %q, want %q", kind, got, tc.wantLabel)
+				}
+			}
+			for kind, sel := range map[string]map[string]string{kindStatefulSet: sts.Spec.Selector.MatchLabels, kindDeployment: dep.Spec.Selector.MatchLabels} {
+				if _, ok := sel[LabelStorkServer]; ok {
+					t.Errorf("%s selector must not carry %s", kind, LabelStorkServer)
+				}
+			}
+		})
 	}
 }
 
@@ -268,7 +404,7 @@ func TestStorkSidecarCanMonitorKea(t *testing.T) {
 		p := DeploymentParams{
 			CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-			ConfigMapName: "test-dhcp4", StorkAgent: stork,
+			ConfigMapName: testDeployConfigMap, StorkAgent: stork,
 		}
 		if nad {
 			p.NADInterface, p.NADSubnet = testNADIface, testNADSubnet
@@ -279,7 +415,7 @@ func TestStorkSidecarCanMonitorKea(t *testing.T) {
 		p := StatefulSetParams{
 			CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-			ConfigMapNames: map[int]string{0: "test-dhcp4-0", 1: "test-dhcp4-1"}, StorkAgent: stork,
+			ConfigMapNames: testSTSConfigMaps(), StorkAgent: stork,
 		}
 		if nad {
 			p.NADInterface, p.NADSubnet = testNADIface, testNADSubnet
@@ -291,7 +427,7 @@ func TestStorkSidecarCanMonitorKea(t *testing.T) {
 		name string
 		spec corev1.PodSpec
 	}{
-		{"deployment", deploy(false)},
+		{kindDeployment, deploy(false)},
 		{"deployment with NAD", deploy(true)},
 		{"statefulset", sts(false)},
 		{"statefulset with NAD", sts(true)},

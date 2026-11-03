@@ -257,6 +257,9 @@ func secretKeyRefEnvVar(envName string, sel *corev1.SecretKeySelector) (corev1.E
 
 // StorkServerInfo holds the resolved server URL and token for stork-agent auto-registration.
 type StorkServerInfo struct {
+	// Name is the KeaStorkServer the agents report to. It labels the agent pods
+	// so that server's reconciler can find them.
+	Name            string
 	ServerURL       string
 	TokenSecretName string
 }
@@ -303,6 +306,7 @@ func storkServerInfoFromCR(server *keav1alpha1.KeaStorkServer) *StorkServerInfo 
 	tokenSecretName := resources.StorkServerTokenSecretName(server.Name)
 
 	return &StorkServerInfo{
+		Name:            server.Name,
 		ServerURL:       serverURL,
 		TokenSecretName: tokenSecretName,
 	}

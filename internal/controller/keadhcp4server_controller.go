@@ -244,8 +244,10 @@ func (r *KeaDhcp4ServerReconciler) resolveDhcp4StorkAgent(ctx context.Context, s
 	storkCfg := server.Spec.Stork.DeepCopy()
 
 	// Auto-discover Stork server if no explicit serverURL is set.
+	var discovered *StorkServerInfo
 	if storkCfg.ServerURL == "" {
 		if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
+			discovered = info
 			storkCfg.ServerURL = info.ServerURL
 			storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
 			logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
@@ -259,6 +261,9 @@ func (r *KeaDhcp4ServerReconciler) resolveDhcp4StorkAgent(ctx context.Context, s
 	storkAgent, err := resources.ResolveStorkParams(storkCfg, serverToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolving stork agent params: %w", err)
+	}
+	if storkAgent != nil && discovered != nil {
+		storkAgent.ServerName = discovered.Name
 	}
 	return storkAgent, nil
 }
