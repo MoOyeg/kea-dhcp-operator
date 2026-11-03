@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -352,6 +353,60 @@ func enqueueStorkDependents(listFn func(ctx context.Context, c client.Reader, na
 	return func(ctx context.Context, obj client.Object) []ctrl.Request {
 		return listFn(ctx, c, obj.GetNamespace())
 	}
+}
+
+// enqueueOnStorkTokenSecret returns a handler.MapFunc that fires only for a
+// KeaStorkServer's agent token Secret. When the Stork server controller writes
+// the real token into it, the Stork-enabled CRs in the namespace re-resolve the
+// token and roll their stork-agent sidecars.
+func enqueueOnStorkTokenSecret(listFn func(ctx context.Context, c client.Reader, namespace string) []ctrl.Request, c client.Reader) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []ctrl.Request {
+		labels := obj.GetLabels()
+		if labels[resources.LabelComponent] != resources.StorkServerComponent ||
+			obj.GetName() != resources.StorkServerTokenSecretName(labels[resources.LabelInstance]) {
+			return nil
+		}
+		return listFn(ctx, c, obj.GetNamespace())
+	}
+}
+
+// deleteStorkMonitoring removes the PodMonitor, Stork metrics Service and (on
+// OpenShift) metrics Route that were created while the Stork agent was enabled.
+// Only objects controlled by owner are deleted. A PodMonitor or Route kind that
+// the cluster or scheme doesn't know is not an error.
+func deleteStorkMonitoring(ctx context.Context, c client.Client, owner metav1.Object, component string, isOpenShift bool) error {
+	ns, name := owner.GetNamespace(), owner.GetName()
+	objs := []client.Object{
+		&monitoringv1.PodMonitor{},
+		&corev1.Service{},
+	}
+	names := []string{
+		resources.PodMonitorName(name, component),
+		resources.StorkMetricsServiceName(name, component),
+	}
+	if isOpenShift {
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(resources.RouteGVK)
+		objs = append(objs, route)
+		names = append(names, resources.StorkRouteName(name, component))
+	}
+
+	for i, obj := range objs {
+		if err := c.Get(ctx, types.NamespacedName{Name: names[i], Namespace: ns}, obj); err != nil {
+			if errors.IsNotFound(err) || meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err) {
+				continue
+			}
+			return fmt.Errorf("fetching %s for Stork cleanup: %w", names[i], err)
+		}
+		if !metav1.IsControlledBy(obj, owner) {
+			continue
+		}
+		if err := c.Delete(ctx, obj); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("deleting %s: %w", names[i], err)
+		}
+		log.FromContext(ctx).Info("deleted Stork monitoring object after Stork was disabled", "name", names[i])
+	}
+	return nil
 }
 
 // listStorkEnabledDhcp4 lists KeaDhcp4Servers with Stork enabled in the given namespace.

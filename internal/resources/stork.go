@@ -31,6 +31,28 @@ const (
 	DefaultStorkPromPort    = int32(9547)
 )
 
+// storkAgentRegisterScript is the sidecar command when a server token is set.
+// The agent daemon only does agent-token registration, which leaves the machine
+// waiting for manual authorization in the Stork UI. Server-token registration,
+// which authorizes the machine automatically, is only available through the
+// separate "register" command. It needs the agent port free (it answers the
+// server's ping itself), so it has to run before the daemon starts. The daemon
+// then needs neither the server URL nor the token: it serves the certificates
+// "register" stored. If registration keeps failing (server not up yet), fall
+// back to the daemon's agent-token registration so monitoring still starts.
+const storkAgentRegisterScript = `for attempt in 1 2 3 4 5 6; do
+  if /usr/bin/stork-agent register --non-interactive \
+      --server-url "$STORK_AGENT_SERVER_URL" --server-token "$STORK_AGENT_SERVER_TOKEN" \
+      --agent-host "$STORK_AGENT_HOST" --agent-port "$STORK_AGENT_PORT"; then
+    unset STORK_AGENT_SERVER_URL STORK_AGENT_SERVER_TOKEN
+    exec /usr/bin/stork-agent
+  fi
+  sleep 10
+done
+echo "server-token registration failed; falling back to agent-token registration" >&2
+unset STORK_AGENT_SERVER_TOKEN
+exec /usr/bin/stork-agent`
+
 // StorkSidecarParams holds the resolved parameters for the stork-agent sidecar.
 type StorkSidecarParams struct {
 	Image           string
@@ -155,6 +177,10 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string, k
 				Add:  append([]corev1.Capability(nil), keaCaps...),
 			},
 		},
+	}
+
+	if sp.ServerURL != "" && sp.ServerToken != "" {
+		c.Command = []string{"/bin/sh", "-c", storkAgentRegisterScript}
 	}
 
 	return c

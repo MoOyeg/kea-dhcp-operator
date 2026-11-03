@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,7 +25,11 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
-const testStorkAgentImage = "test-agent:v1"
+const (
+	testStorkAgentImage  = "test-agent:v1"
+	testStorkServerURL   = "http://stork-server:8080"
+	testStorkServerToken = "secret-token"
+)
 
 func TestResolveStorkParams_NilConfig(t *testing.T) {
 	params, err := ResolveStorkParams(nil, "")
@@ -130,8 +135,8 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 		Image:          testStorkAgentImage,
 		Port:           8080,
 		PrometheusPort: 9547,
-		ServerURL:      "http://stork-server:8080",
-		ServerToken:    "secret-token",
+		ServerURL:      testStorkServerURL,
+		ServerToken:    testStorkServerToken,
 	}
 	c := buildStorkAgentContainer(sp, "kea-config", nil)
 
@@ -141,8 +146,8 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	}
 
 	// Should have server URL
-	if e, ok := envMap["STORK_AGENT_SERVER_URL"]; !ok || e.Value != "http://stork-server:8080" {
-		t.Errorf("expected STORK_AGENT_SERVER_URL=http://stork-server:8080, got %+v", e)
+	if e, ok := envMap["STORK_AGENT_SERVER_URL"]; !ok || e.Value != testStorkServerURL {
+		t.Errorf("expected STORK_AGENT_SERVER_URL=%s, got %+v", testStorkServerURL, e)
 	}
 
 	// Should have non-interactive mode
@@ -163,13 +168,50 @@ func TestBuildStorkAgentContainer_WithServer(t *testing.T) {
 	}
 
 	// Should have server token
-	if e, ok := envMap["STORK_AGENT_SERVER_TOKEN"]; !ok || e.Value != "secret-token" {
+	if e, ok := envMap["STORK_AGENT_SERVER_TOKEN"]; !ok || e.Value != testStorkServerToken {
 		t.Errorf("expected STORK_AGENT_SERVER_TOKEN=secret-token, got %+v", e)
 	}
 
 	// Should NOT have prometheus-only mode
 	if _, ok := envMap["STORK_AGENT_LISTEN_PROMETHEUS_ONLY"]; ok {
 		t.Error("should not have STORK_AGENT_LISTEN_PROMETHEUS_ONLY when server URL is set")
+	}
+}
+
+// TestBuildStorkAgentContainer_ServerTokenRegistration guards the auto-authorization
+// fix: the agent daemon only does agent-token registration (manual approval), so a
+// server token must go through "stork-agent register" before the daemon starts.
+func TestBuildStorkAgentContainer_ServerTokenRegistration(t *testing.T) {
+	withToken := buildStorkAgentContainer(&StorkSidecarParams{
+		Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547,
+		ServerURL: testStorkServerURL, ServerToken: testStorkServerToken,
+	}, "kea-config", nil)
+	if len(withToken.Command) != 3 || withToken.Command[0] != "/bin/sh" || withToken.Command[1] != "-c" {
+		t.Fatalf("expected a /bin/sh -c command, got %q", withToken.Command)
+	}
+	script := withToken.Command[2]
+	for _, want := range []string{
+		"stork-agent register --non-interactive",
+		`--server-token "$STORK_AGENT_SERVER_TOKEN"`,
+		`--agent-host "$STORK_AGENT_HOST"`,
+		`--agent-port "$STORK_AGENT_PORT"`,
+		"exec /usr/bin/stork-agent",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("register script missing %q", want)
+		}
+	}
+	if strings.Index(script, "register") > strings.Index(script, "exec /usr/bin/stork-agent") {
+		t.Error("register must run before the agent daemon starts (it needs the agent port free)")
+	}
+
+	for name, sp := range map[string]*StorkSidecarParams{
+		"server without token": {Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547, ServerURL: testStorkServerURL},
+		"prometheus only":      {Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547},
+	} {
+		if c := buildStorkAgentContainer(sp, "kea-config", nil); c.Command != nil {
+			t.Errorf("%s: expected the image entrypoint, got command %q", name, c.Command)
+		}
 	}
 }
 

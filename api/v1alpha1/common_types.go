@@ -530,6 +530,10 @@ const (
 
 	// ConditionTypeProgressing indicates changes are being applied.
 	ConditionTypeProgressing = "Progressing"
+
+	// ConditionTypeServerTokenSynced indicates the agent token Secret of a
+	// KeaStorkServer holds the token the Stork server actually accepts.
+	ConditionTypeServerTokenSynced = "ServerTokenSynced"
 )
 
 const (

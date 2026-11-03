@@ -63,9 +63,6 @@ type StorkServerParams struct {
 
 	// AdminSecretName is the name of the Secret containing the generated admin password.
 	AdminSecretName string
-
-	// ServerTokenSecretName is the name of the Secret containing the server agent token.
-	ServerTokenSecretName string
 }
 
 // BuildStorkServerDeployment constructs a Deployment for the Stork server.
@@ -93,19 +90,6 @@ func BuildStorkServerDeployment(p StorkServerParams) *appsv1.Deployment {
 
 	if p.EnableMetrics {
 		env = append(env, corev1.EnvVar{Name: "STORK_SERVER_ENABLE_METRICS", Value: valueTrue})
-	}
-
-	// Set the server agent token from the token Secret so agents can register.
-	if p.ServerTokenSecretName != "" {
-		env = append(env, corev1.EnvVar{
-			Name: "STORK_SERVER_AGENT_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: p.ServerTokenSecretName},
-					Key:                  "token",
-				},
-			},
-		})
 	}
 
 	// Append SecretKeyRef env vars for DB credentials.

@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +43,19 @@ type KeaStorkServerReconciler struct {
 	Scheme      *runtime.Scheme
 	IsOpenShift bool
 	Recorder    record.EventRecorder
+
+	// FetchServerToken reads the agent token from a running Stork server.
+	// Defaults to fetchStorkServerToken; tests replace it.
+	FetchServerToken storkTokenFetcher
 }
+
+const (
+	// storkTokenRetryInterval is how soon to retry a failed token sync.
+	storkTokenRetryInterval = 30 * time.Second
+	// storkTokenResyncInterval re-reads the token so a regeneration in the
+	// Stork UI reaches the agents.
+	storkTokenResyncInterval = 5 * time.Minute
+)
 
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keastorkservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keastorkservers/status,verbs=get;update;patch
@@ -154,17 +167,14 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("fetching admin Secret: %w", err)
 	}
 
-	// 6. Reconcile server agent token Secret.
+	// 6. Reconcile server agent token Secret. Stork generates the real token
+	// itself, so the Secret starts empty and is filled by syncServerToken once
+	// the server is up. Agents register without a token until then.
 	tokenSecretName := resources.StorkServerTokenSecretName(server.Name)
 	tokenSecret := &corev1.Secret{}
 	tokenSecretKey := types.NamespacedName{Name: tokenSecretName, Namespace: server.Namespace}
 	if err := r.Get(ctx, tokenSecretKey, tokenSecret); errors.IsNotFound(err) {
-		tokenBytes := make([]byte, 24)
-		if _, err := rand.Read(tokenBytes); err != nil {
-			return ctrl.Result{}, fmt.Errorf("generating server token: %w", err)
-		}
-		token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-		tokenSecret = resources.BuildStorkServerTokenSecret(server.Namespace, tokenSecretName, labels, token)
+		tokenSecret = resources.BuildStorkServerTokenSecret(server.Namespace, tokenSecretName, labels, "")
 		if err := reconcileResource(ctx, r.Client, r.Scheme, server, tokenSecret); err != nil {
 			return ctrl.Result{}, fmt.Errorf("reconciling server token Secret: %w", err)
 		}
@@ -174,27 +184,26 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 7. Reconcile Deployment.
 	dp := resources.StorkServerParams{
-		Namespace:             server.Namespace,
-		CRName:                server.Name,
-		Image:                 server.Spec.Container.Image,
-		ImagePullPolicy:       server.Spec.Container.ImagePullPolicy,
-		Replicas:              server.Spec.Replicas,
-		Resources:             server.Spec.Container.Resources,
-		Port:                  port,
-		EnableMetrics:         enableMetrics,
-		ImagePullSecrets:      server.Spec.Container.ImagePullSecrets,
-		ServiceAccountName:    resources.ServiceAccountName(server.Name),
-		DBHost:                server.Spec.Database.Host,
-		DBPort:                dbPort,
-		DBName:                dbName,
-		DBSSLMode:             dbSSLMode,
-		NodeSelector:          nodeSelector,
-		Tolerations:           tolerations,
-		Affinity:              affinity,
-		PodAnnotations:        podAnnotations,
-		SecretEnvVars:         secretEnvVars,
-		AdminSecretName:       adminSecretName,
-		ServerTokenSecretName: tokenSecretName,
+		Namespace:          server.Namespace,
+		CRName:             server.Name,
+		Image:              server.Spec.Container.Image,
+		ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
+		Replicas:           server.Spec.Replicas,
+		Resources:          server.Spec.Container.Resources,
+		Port:               port,
+		EnableMetrics:      enableMetrics,
+		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
+		ServiceAccountName: resources.ServiceAccountName(server.Name),
+		DBHost:             server.Spec.Database.Host,
+		DBPort:             dbPort,
+		DBName:             dbName,
+		DBSSLMode:          dbSSLMode,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           affinity,
+		PodAnnotations:     podAnnotations,
+		SecretEnvVars:      secretEnvVars,
+		AdminSecretName:    adminSecretName,
 	}
 	deploy := resources.BuildStorkServerDeployment(dp)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
@@ -260,13 +269,70 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
+	// 11. Copy the server's real agent token into the token Secret.
+	var result ctrl.Result
+	if readyReplicas > 0 {
+		if err := r.syncServerToken(ctx, server, adminSecretName, tokenSecretName); err != nil {
+			logger.Info("Stork server token not synced yet", "reason", err.Error())
+			setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeServerTokenSynced,
+				keav1alpha1.ConditionStatusFalse, "TokenSyncFailed", err.Error())
+			result.RequeueAfter = storkTokenRetryInterval
+		} else {
+			setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeServerTokenSynced,
+				keav1alpha1.ConditionStatusTrue, "TokenSynced", "Agent token Secret matches the Stork server")
+			result.RequeueAfter = storkTokenResyncInterval
+		}
+	}
+
 	if err := r.Status().Update(ctx, server); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
 	}
 
 	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaStorkServer")
 
-	return ctrl.Result{}, nil
+	return result, nil
+}
+
+// syncServerToken logs into the Stork server with the generated admin
+// credentials, reads the agent token it accepts, and writes it into the token
+// Secret when it differs. KeaDhcp4Server/KeaDhcp6Server watch that Secret and
+// roll their stork-agent sidecars onto the new token.
+func (r *KeaStorkServerReconciler) syncServerToken(ctx context.Context, server *keav1alpha1.KeaStorkServer, adminSecretName, tokenSecretName string) error {
+	adminRef := &corev1.LocalObjectReference{Name: adminSecretName}
+	username, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyUsername)
+	if err != nil {
+		return err
+	}
+	password, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyPassword)
+	if err != nil {
+		return err
+	}
+
+	fetch := r.FetchServerToken
+	if fetch == nil {
+		fetch = fetchStorkServerToken
+	}
+	token, err := fetch(ctx, storkServerInfoFromCR(server).ServerURL, username, password)
+	if err != nil {
+		return err
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: server.Namespace}, secret); err != nil {
+		return fmt.Errorf("fetching token Secret: %w", err)
+	}
+	if string(secret.Data[secretKeyToken]) == token {
+		return nil
+	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	secret.Data[secretKeyToken] = []byte(token)
+	if err := r.Update(ctx, secret); err != nil {
+		return fmt.Errorf("updating token Secret: %w", err)
+	}
+	log.FromContext(ctx).Info("updated Stork agent token Secret from the Stork server", "secret", tokenSecretName)
+	return nil
 }
 
 // getRouteURL reads the actual hostname from an OpenShift Route and returns the full URL.

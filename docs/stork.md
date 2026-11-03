@@ -98,6 +98,24 @@ spec:
 
 The agent registers non-interactively using the token, avoiding manual approval in the Stork UI.
 
+With a token, the sidecar runs `stork-agent register --server-token` before starting the agent, because only that command authorizes the machine automatically. The agent image therefore needs `/bin/sh`; the default image has it.
+
+### Using a KeaStorkServer instead
+
+If the server is a `KeaStorkServer` in the same namespace, point at it and leave out `serverURL` and `serverTokenSecretRef`:
+
+```yaml
+spec:
+  stork:
+    enabled: true
+    storkServerRef:
+      name: stork
+```
+
+Stork generates its agent token itself, so the operator reads it from the running server, logging in with the generated `<name>-stork-admin` credentials. It keeps the token in `<name>-stork-server-token` and reports progress in the `ServerTokenSynced` condition on the `KeaStorkServer`. Agents that start before the token is available are rolled onto it once it syncs, and the token is re-read every 5 minutes, so regenerating it in the Stork UI reaches the agents.
+
+If you change the admin password in the Stork UI, update `<name>-stork-admin` to match, or the sync stops and `ServerTokenSynced` turns `False`.
+
 ## Configuration Reference
 
 | Field | Default | Description |

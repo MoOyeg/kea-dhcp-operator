@@ -260,7 +260,7 @@ func (r *KeaDhcp6ServerReconciler) resolveDhcp6StorkAgent(ctx context.Context, s
 
 	var serverToken string
 	if storkCfg.ServerTokenSecretRef != nil {
-		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
+		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, secretKeyToken)
 	}
 	storkAgent, err := resources.ResolveStorkParams(storkCfg, serverToken)
 	if err != nil {
@@ -293,10 +293,11 @@ func (r *KeaDhcp6ServerReconciler) reconcileDhcp6ControlService(ctx context.Cont
 }
 
 // reconcileDhcp6StorkMonitoring reconciles the PodMonitor, Stork metrics Service
-// and (on OpenShift) the metrics Route when the Stork agent is enabled.
+// and (on OpenShift) the metrics Route when the Stork agent is enabled, and
+// deletes them when it is disabled.
 func (r *KeaDhcp6ServerReconciler) reconcileDhcp6StorkMonitoring(ctx context.Context, server *keav1alpha1.KeaDhcp6Server, component string, storkAgent *resources.StorkSidecarParams) error {
 	if storkAgent == nil {
-		return nil
+		return deleteStorkMonitoring(ctx, r.Client, server, component, r.IsOpenShift)
 	}
 	logger := log.FromContext(ctx)
 
@@ -377,5 +378,7 @@ func (r *KeaDhcp6ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&monitoringv1.PodMonitor{}).
 		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
 			enqueueStorkDependents(listStorkEnabledDhcp6, mgr.GetClient()))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueOnStorkTokenSecret(listStorkEnabledDhcp6, mgr.GetClient()))).
 		Complete(r)
 }
