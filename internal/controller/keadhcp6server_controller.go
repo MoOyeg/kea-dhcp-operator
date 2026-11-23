@@ -250,8 +250,10 @@ func (r *KeaDhcp6ServerReconciler) resolveDhcp6StorkAgent(ctx context.Context, s
 	storkCfg := server.Spec.Stork.DeepCopy()
 
 	// Auto-discover Stork server if no explicit serverURL is set.
+	var discovered *StorkServerInfo
 	if storkCfg.ServerURL == "" {
 		if info := resolveStorkServer(ctx, r.Client, server.Namespace, storkCfg.StorkServerRef); info != nil {
+			discovered = info
 			storkCfg.ServerURL = info.ServerURL
 			storkCfg.ServerTokenSecretRef = &corev1.LocalObjectReference{Name: info.TokenSecretName}
 			logger.Info("auto-discovered Stork server for agent registration", "serverURL", info.ServerURL)
@@ -260,11 +262,14 @@ func (r *KeaDhcp6ServerReconciler) resolveDhcp6StorkAgent(ctx context.Context, s
 
 	var serverToken string
 	if storkCfg.ServerTokenSecretRef != nil {
-		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, "token")
+		serverToken, _ = resolveSecretValue(ctx, r.Client, server.Namespace, storkCfg.ServerTokenSecretRef, secretKeyToken)
 	}
 	storkAgent, err := resources.ResolveStorkParams(storkCfg, serverToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolving stork agent params: %w", err)
+	}
+	if storkAgent != nil && discovered != nil {
+		storkAgent.ServerName = discovered.Name
 	}
 	return storkAgent, nil
 }
@@ -293,10 +298,11 @@ func (r *KeaDhcp6ServerReconciler) reconcileDhcp6ControlService(ctx context.Cont
 }
 
 // reconcileDhcp6StorkMonitoring reconciles the PodMonitor, Stork metrics Service
-// and (on OpenShift) the metrics Route when the Stork agent is enabled.
+// and (on OpenShift) the metrics Route when the Stork agent is enabled, and
+// deletes them when it is disabled.
 func (r *KeaDhcp6ServerReconciler) reconcileDhcp6StorkMonitoring(ctx context.Context, server *keav1alpha1.KeaDhcp6Server, component string, storkAgent *resources.StorkSidecarParams) error {
 	if storkAgent == nil {
-		return nil
+		return deleteStorkMonitoring(ctx, r.Client, server, component, r.IsOpenShift)
 	}
 	logger := log.FromContext(ctx)
 
@@ -377,5 +383,7 @@ func (r *KeaDhcp6ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&monitoringv1.PodMonitor{}).
 		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
 			enqueueStorkDependents(listStorkEnabledDhcp6, mgr.GetClient()))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueOnStorkTokenSecret(listStorkEnabledDhcp6, mgr.GetClient()))).
 		Complete(r)
 }

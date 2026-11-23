@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
@@ -42,13 +44,34 @@ type KeaStorkServerReconciler struct {
 	Scheme      *runtime.Scheme
 	IsOpenShift bool
 	Recorder    record.EventRecorder
+
+	// FetchServerToken reads the agent token from a running Stork server.
+	// Defaults to fetchStorkServerToken; tests replace it.
+	FetchServerToken storkTokenFetcher
+
+	// ConnectStork opens the Stork session used to keep agent machines in
+	// step with their pods. Defaults to connectStork; tests replace it.
+	ConnectStork storkMachineConnector
 }
+
+const (
+	// storkTokenRetryInterval is how soon to retry a failed token sync.
+	storkTokenRetryInterval = 30 * time.Second
+	// storkTokenResyncInterval re-reads the token so a regeneration in the
+	// Stork UI reaches the agents.
+	storkTokenResyncInterval = 5 * time.Minute
+	// storkMachineRecheckInterval is how soon to look again while an agent is
+	// still registering or its machine has no state yet.
+	storkMachineRecheckInterval = 30 * time.Second
+)
 
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keastorkservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keastorkservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keastorkservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
 
 // Reconcile reconciles the KeaStorkServer custom resource.
 func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -154,17 +177,14 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("fetching admin Secret: %w", err)
 	}
 
-	// 6. Reconcile server agent token Secret.
+	// 6. Reconcile server agent token Secret. Stork generates the real token
+	// itself, so the Secret starts empty and is filled by syncServerToken once
+	// the server is up. Agents register without a token until then.
 	tokenSecretName := resources.StorkServerTokenSecretName(server.Name)
 	tokenSecret := &corev1.Secret{}
 	tokenSecretKey := types.NamespacedName{Name: tokenSecretName, Namespace: server.Namespace}
 	if err := r.Get(ctx, tokenSecretKey, tokenSecret); errors.IsNotFound(err) {
-		tokenBytes := make([]byte, 24)
-		if _, err := rand.Read(tokenBytes); err != nil {
-			return ctrl.Result{}, fmt.Errorf("generating server token: %w", err)
-		}
-		token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-		tokenSecret = resources.BuildStorkServerTokenSecret(server.Namespace, tokenSecretName, labels, token)
+		tokenSecret = resources.BuildStorkServerTokenSecret(server.Namespace, tokenSecretName, labels, "")
 		if err := reconcileResource(ctx, r.Client, r.Scheme, server, tokenSecret); err != nil {
 			return ctrl.Result{}, fmt.Errorf("reconciling server token Secret: %w", err)
 		}
@@ -174,27 +194,26 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 7. Reconcile Deployment.
 	dp := resources.StorkServerParams{
-		Namespace:             server.Namespace,
-		CRName:                server.Name,
-		Image:                 server.Spec.Container.Image,
-		ImagePullPolicy:       server.Spec.Container.ImagePullPolicy,
-		Replicas:              server.Spec.Replicas,
-		Resources:             server.Spec.Container.Resources,
-		Port:                  port,
-		EnableMetrics:         enableMetrics,
-		ImagePullSecrets:      server.Spec.Container.ImagePullSecrets,
-		ServiceAccountName:    resources.ServiceAccountName(server.Name),
-		DBHost:                server.Spec.Database.Host,
-		DBPort:                dbPort,
-		DBName:                dbName,
-		DBSSLMode:             dbSSLMode,
-		NodeSelector:          nodeSelector,
-		Tolerations:           tolerations,
-		Affinity:              affinity,
-		PodAnnotations:        podAnnotations,
-		SecretEnvVars:         secretEnvVars,
-		AdminSecretName:       adminSecretName,
-		ServerTokenSecretName: tokenSecretName,
+		Namespace:          server.Namespace,
+		CRName:             server.Name,
+		Image:              server.Spec.Container.Image,
+		ImagePullPolicy:    server.Spec.Container.ImagePullPolicy,
+		Replicas:           server.Spec.Replicas,
+		Resources:          server.Spec.Container.Resources,
+		Port:               port,
+		EnableMetrics:      enableMetrics,
+		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
+		ServiceAccountName: resources.ServiceAccountName(server.Name),
+		DBHost:             server.Spec.Database.Host,
+		DBPort:             dbPort,
+		DBName:             dbName,
+		DBSSLMode:          dbSSLMode,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           affinity,
+		PodAnnotations:     podAnnotations,
+		SecretEnvVars:      secretEnvVars,
+		AdminSecretName:    adminSecretName,
 	}
 	deploy := resources.BuildStorkServerDeployment(dp)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
@@ -260,13 +279,108 @@ func (r *KeaStorkServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
+	// 11. Sync the agent token and the agent machines with the running server.
+	var result ctrl.Result
+	if readyReplicas > 0 {
+		result.RequeueAfter = r.syncWithStorkServer(ctx, server, adminSecretName, tokenSecretName)
+	}
+
 	if err := r.Status().Update(ctx, server); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
 	}
 
 	r.Recorder.Event(server, corev1.EventTypeNormal, "Reconciled", "Successfully reconciled KeaStorkServer")
 
-	return ctrl.Result{}, nil
+	return result, nil
+}
+
+// syncServerToken logs into the Stork server with the generated admin
+// credentials, reads the agent token it accepts, and writes it into the token
+// Secret when it differs. KeaDhcp4Server/KeaDhcp6Server watch that Secret and
+// roll their stork-agent sidecars onto the new token.
+func (r *KeaStorkServerReconciler) syncServerToken(ctx context.Context, server *keav1alpha1.KeaStorkServer, adminSecretName, tokenSecretName string) error {
+	adminRef := &corev1.LocalObjectReference{Name: adminSecretName}
+	username, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyUsername)
+	if err != nil {
+		return err
+	}
+	password, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyPassword)
+	if err != nil {
+		return err
+	}
+
+	fetch := r.FetchServerToken
+	if fetch == nil {
+		fetch = fetchStorkServerToken
+	}
+	token, err := fetch(ctx, storkServerInfoFromCR(server).ServerURL, username, password)
+	if err != nil {
+		return err
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: server.Namespace}, secret); err != nil {
+		return fmt.Errorf("fetching token Secret: %w", err)
+	}
+	if string(secret.Data[secretKeyToken]) == token {
+		return nil
+	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	secret.Data[secretKeyToken] = []byte(token)
+	if err := r.Update(ctx, secret); err != nil {
+		return fmt.Errorf("updating token Secret: %w", err)
+	}
+	log.FromContext(ctx).Info("updated Stork agent token Secret from the Stork server", "secret", tokenSecretName)
+	return nil
+}
+
+// syncWithStorkServer copies the server's real agent token into the token
+// Secret, then keeps the server's machines in step with the agent pods. It
+// records the token state in the ServerTokenSynced condition and returns how
+// soon to reconcile again.
+func (r *KeaStorkServerReconciler) syncWithStorkServer(ctx context.Context, server *keav1alpha1.KeaStorkServer, adminSecretName, tokenSecretName string) time.Duration {
+	logger := log.FromContext(ctx)
+	if err := r.syncServerToken(ctx, server, adminSecretName, tokenSecretName); err != nil {
+		logger.Info("Stork server token not synced yet", "reason", err.Error())
+		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeServerTokenSynced,
+			keav1alpha1.ConditionStatusFalse, "TokenSyncFailed", err.Error())
+		return storkTokenRetryInterval
+	}
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeServerTokenSynced,
+		keav1alpha1.ConditionStatusTrue, "TokenSynced", "Agent token Secret matches the Stork server")
+
+	pending, err := r.syncAgentMachines(ctx, server, adminSecretName)
+	if err != nil {
+		logger.Info("Stork agent machines not checked", "reason", err.Error())
+	}
+	if err != nil || pending {
+		return storkMachineRecheckInterval
+	}
+	return storkTokenResyncInterval
+}
+
+// syncAgentMachines logs into the Stork server and runs reconcileAgentMachines.
+func (r *KeaStorkServerReconciler) syncAgentMachines(ctx context.Context, server *keav1alpha1.KeaStorkServer, adminSecretName string) (bool, error) {
+	adminRef := &corev1.LocalObjectReference{Name: adminSecretName}
+	username, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyUsername)
+	if err != nil {
+		return false, err
+	}
+	password, err := resolveSecretValue(ctx, r.Client, server.Namespace, adminRef, secretKeyPassword)
+	if err != nil {
+		return false, err
+	}
+	connect := r.ConnectStork
+	if connect == nil {
+		connect = connectStork
+	}
+	api, err := connect(ctx, storkServerInfoFromCR(server).ServerURL, username, password)
+	if err != nil {
+		return false, err
+	}
+	return reconcileAgentMachines(ctx, r.Client, server, api)
 }
 
 // getRouteURL reads the actual hostname from an OpenShift Route and returns the full URL.
@@ -350,5 +464,8 @@ func (r *KeaStorkServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
+		// Agent pods coming and going changes which machines need a refresh
+		// or removal. Only labelled pods are cached (see cmd/main.go).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(storkServersForAgentPod)).
 		Complete(r)
 }

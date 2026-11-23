@@ -45,6 +45,10 @@ const (
 	secretKeyUsername = "username"
 	secretKeyPassword = "password"
 
+	// secretKeyToken is the key holding the Stork agent token in the
+	// KeaStorkServer token Secret.
+	secretKeyToken = "token"
+
 	// fieldType is the "type" key used in SCC strategy maps.
 	fieldType = "type"
 )

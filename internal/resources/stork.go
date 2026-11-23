@@ -31,6 +31,28 @@ const (
 	DefaultStorkPromPort    = int32(9547)
 )
 
+// storkAgentRegisterScript is the sidecar command when a server token is set.
+// The agent daemon only does agent-token registration, which leaves the machine
+// waiting for manual authorization in the Stork UI. Server-token registration,
+// which authorizes the machine automatically, is only available through the
+// separate "register" command. It needs the agent port free (it answers the
+// server's ping itself), so it has to run before the daemon starts. The daemon
+// then needs neither the server URL nor the token: it serves the certificates
+// "register" stored. If registration keeps failing (server not up yet), fall
+// back to the daemon's agent-token registration so monitoring still starts.
+const storkAgentRegisterScript = `for attempt in 1 2 3 4 5 6; do
+  if /usr/bin/stork-agent register --non-interactive \
+      --server-url "$STORK_AGENT_SERVER_URL" --server-token "$STORK_AGENT_SERVER_TOKEN" \
+      --agent-host "$STORK_AGENT_HOST" --agent-port "$STORK_AGENT_PORT"; then
+    unset STORK_AGENT_SERVER_URL STORK_AGENT_SERVER_TOKEN
+    exec /usr/bin/stork-agent
+  fi
+  sleep 10
+done
+echo "server-token registration failed; falling back to agent-token registration" >&2
+unset STORK_AGENT_SERVER_TOKEN
+exec /usr/bin/stork-agent`
+
 // StorkSidecarParams holds the resolved parameters for the stork-agent sidecar.
 type StorkSidecarParams struct {
 	Image           string
@@ -41,6 +63,39 @@ type StorkSidecarParams struct {
 	Port            int32
 	PrometheusPort  int32
 	ExtraEnv        []corev1.EnvVar
+	// AgentDomain is the DNS suffix that follows the pod name in the address
+	// the agent registers with, e.g. "<cr>-dhcp4-hl.<ns>.svc.cluster.local"
+	// for StatefulSet pods. Set it only when every pod has a stable per-pod
+	// DNS name. Empty registers with the pod IP instead.
+	AgentDomain string
+	// ServerName is the in-cluster KeaStorkServer the agent registers with.
+	// When set, the pod template carries LabelStorkServer so that server's
+	// reconciler can find the agent pods. Empty for external Stork servers.
+	ServerName string
+}
+
+const (
+	envStorkAgentHost = "STORK_AGENT_HOST"
+	fieldPathPodIP    = "status.podIP"
+)
+
+// LabelStorkServer marks pods whose stork-agent reports to the named
+// KeaStorkServer in the same namespace.
+const LabelStorkServer = "kea.openshift.io/stork-server"
+
+// podTemplateLabels returns the workload labels plus the Stork server label
+// when the agent reports to an in-cluster KeaStorkServer. It always returns a
+// new map: the selector labels must stay as they are, because a StatefulSet's
+// selector is immutable.
+func podTemplateLabels(labels map[string]string, sp *StorkSidecarParams) map[string]string {
+	out := make(map[string]string, len(labels)+1)
+	for k, v := range labels {
+		out[k] = v
+	}
+	if sp != nil && sp.ServerName != "" {
+		out[LabelStorkServer] = sp.ServerName
+	}
+	return out
 }
 
 // ResolveStorkParams converts the CRD StorkAgentConfig into resolved params.
@@ -78,10 +133,47 @@ func ResolveStorkParams(cfg *keav1alpha1.StorkAgentConfig, serverToken string) (
 	}, nil
 }
 
+// storkAgentHostEnv sets STORK_AGENT_HOST, the address the Stork server
+// records for the agent and dials for state.
+//
+// Stork keys machines on address and agent port, and re-registering an
+// existing address updates that machine in place. With a stable per-pod DNS
+// name, a recreated pod therefore takes over its old machine. With the pod IP,
+// every recreation adds a new machine and leaves the old one behind. The state
+// puller then keeps dialling those dead addresses one after another, which
+// delays the state pulls for the live agents.
+func storkAgentHostEnv(agentDomain string) []corev1.EnvVar {
+	if agentDomain == "" {
+		return []corev1.EnvVar{{
+			Name: envStorkAgentHost,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: fieldPathPodIP},
+			},
+		}}
+	}
+	// POD_NAME must come first: $(POD_NAME) only expands from variables
+	// defined earlier in the list.
+	return []corev1.EnvVar{
+		{
+			Name: "POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+			},
+		},
+		{Name: envStorkAgentHost, Value: "$(POD_NAME)." + agentDomain},
+	}
+}
+
 // buildStorkAgentContainer creates the stork-agent sidecar container.
 // It shares the Kea config volume (read-only) so the agent can discover Kea
 // by reading the config file path from the process command line.
-func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) corev1.Container {
+//
+// keaCaps must be the capabilities added to the Kea container in the same pod.
+// The agent inspects the Kea process via /proc (e.g. /proc/<pid>/cwd), and the
+// kernel only allows that without CAP_SYS_PTRACE when the observer's permitted
+// capabilities are a superset of the target's. Without them every detection
+// cycle logs "readlink /proc/<pid>/cwd: permission denied".
+func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string, keaCaps []corev1.Capability) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: "STORK_AGENT_PORT", Value: fmt.Sprintf("%d", sp.Port)},
 		{Name: "STORK_AGENT_PROMETHEUS_KEA_EXPORTER_PORT", Value: fmt.Sprintf("%d", sp.PrometheusPort)},
@@ -93,16 +185,7 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 			corev1.EnvVar{Name: "STORK_AGENT_SERVER_URL", Value: sp.ServerURL},
 			corev1.EnvVar{Name: "STORK_AGENT_NON_INTERACTIVE", Value: valueTrue},
 		)
-		// Always register with the pod IP so the Stork server can reach the agent
-		// over the cluster network.
-		env = append(env, corev1.EnvVar{
-			Name: "STORK_AGENT_HOST",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "status.podIP",
-				},
-			},
-		})
+		env = append(env, storkAgentHostEnv(sp.AgentDomain)...)
 		if sp.ServerToken != "" {
 			env = append(env, corev1.EnvVar{Name: "STORK_AGENT_SERVER_TOKEN", Value: sp.ServerToken})
 		}
@@ -146,8 +229,13 @@ func buildStorkAgentContainer(sp *StorkSidecarParams, configVolumeName string) c
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{capabilityAll},
+				Add:  append([]corev1.Capability(nil), keaCaps...),
 			},
 		},
+	}
+
+	if sp.ServerURL != "" && sp.ServerToken != "" {
+		c.Command = []string{"/bin/sh", "-c", storkAgentRegisterScript}
 	}
 
 	return c

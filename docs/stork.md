@@ -98,6 +98,35 @@ spec:
 
 The agent registers non-interactively using the token, avoiding manual approval in the Stork UI.
 
+With a token, the sidecar runs `stork-agent register --server-token` before starting the agent, because only that command authorizes the machine automatically. The agent image therefore needs `/bin/sh`; the default image has it.
+
+### Using a KeaStorkServer instead
+
+If the server is a `KeaStorkServer` in the same namespace, point at it and leave out `serverURL` and `serverTokenSecretRef`:
+
+```yaml
+spec:
+  stork:
+    enabled: true
+    storkServerRef:
+      name: stork
+```
+
+Stork generates its agent token itself, so the operator reads it from the running server, logging in with the generated `<name>-stork-admin` credentials. It keeps the token in `<name>-stork-server-token` and reports progress in the `ServerTokenSynced` condition on the `KeaStorkServer`. Agents that start before the token is available are rolled onto it once it syncs, and the token is re-read every 5 minutes, so regenerating it in the Stork UI reaches the agents.
+
+If you change the admin password in the Stork UI, update `<name>-stork-admin` to match, or the sync stops and `ServerTokenSynced` turns `False`.
+
+#### How agents appear in Stork
+
+HA (StatefulSet) agents register under their stable per-pod DNS name, `<pod>.<cr>-dhcp4-hl.<namespace>.svc.cluster.local`, rather than the pod IP. A recreated pod takes over its existing machine in Stork, so the machine list doesn't grow with every restart. Non-HA (Deployment) agents have no stable per-pod name and register with the pod IP.
+
+Agent pods carry the label `kea.openshift.io/stork-server: <name>`, and the `KeaStorkServer` reconciler uses that label to find them. It then keeps the server's machine list in step with them:
+
+- **It refreshes machines that have no state.** With server-token registration, Stork's first state pull always fails with `GetState not implemented`, because the pull runs while `stork-agent register` still holds the agent port with a server that only answers Ping. Once the real agent is running, the operator asks Stork to pull the state again. This is the same as the Refresh button in the UI.
+- **It removes machines whose pod is gone for good.** These are machines registered under an operator agent name whose StatefulSet ordinal was scaled away or whose CR was deleted. A pod that is only being recreated keeps its machine. Machines registered by IP or under any other name are never touched.
+
+The operator rechecks every 30 seconds while an agent is still registering or has no state, and every 5 minutes after that. After upgrading from a version that registered agents by pod IP, delete the old IP-addressed machines in the Stork UI once.
+
 ## Configuration Reference
 
 | Field | Default | Description |

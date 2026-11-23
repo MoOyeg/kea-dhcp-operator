@@ -26,10 +26,14 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -42,6 +46,7 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 	"github.com/openshift/ocp-kea-dhcp/internal/controller"
 	"github.com/openshift/ocp-kea-dhcp/internal/platform"
+	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -126,7 +131,18 @@ func main() {
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
+	// The KeaStorkServer controller watches stork-agent pods. Cache only the pods
+	// labelled with their Stork server, not every pod in the cluster.
+	storkAgentPods, err := labels.NewRequirement(resources.LabelStorkServer, selection.Exists, nil)
+	if err != nil {
+		setupLog.Error(err, "unable to build stork-agent pod selector")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
+			&corev1.Pod{}: {Label: labels.NewSelector().Add(*storkAgentPods)},
+		}},
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,

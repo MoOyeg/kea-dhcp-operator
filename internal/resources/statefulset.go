@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -241,7 +242,16 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 	// when Kea tries to bind the dedicated listener to the peer URL address.
 	// For other peers, resolve the per-pod Service DNS (stable ClusterIP).
 	stsName := StatefulSetName(p.CRName, p.Component)
-	for configHostname, serviceHostname := range p.PeerHostnameMap {
+	// Iterate in sorted order: Go map order is random, and a script that
+	// changes between reconciles changes the pod template, which rolls every
+	// HA pod again and again.
+	peerHostnames := make([]string, 0, len(p.PeerHostnameMap))
+	for h := range p.PeerHostnameMap {
+		peerHostnames = append(peerHostnames, h)
+	}
+	sort.Strings(peerHostnames)
+	for _, configHostname := range peerHostnames {
+		serviceHostname := p.PeerHostnameMap[configHostname]
 		initScript += fmt.Sprintf(`
 if echo "%s" | grep -q "^%s-${ordinal}\."; then
   pod_ip=$(hostname -i | awk '{print $1}')
@@ -299,8 +309,14 @@ fi`, configHostname, stsName, configHostname, configDst, configHostname,
 			// Use static peer addresses specified in the CR.
 			// Build a case statement mapping ordinal to address.
 			caseScript := `ordinal=${HOSTNAME##*-}; prefix=$(echo ` + p.NADSubnet + ` | cut -d/ -f2); case $ordinal in `
-			for ord, addr := range p.PeerAddresses {
-				caseScript += fmt.Sprintf(`%d) ip_addr="%s/${prefix}" ;; `, ord, addr)
+			// Sorted for the same reason as the peer hostnames above.
+			ordinals := make([]int, 0, len(p.PeerAddresses))
+			for ord := range p.PeerAddresses {
+				ordinals = append(ordinals, ord)
+			}
+			sort.Ints(ordinals)
+			for _, ord := range ordinals {
+				caseScript += fmt.Sprintf(`%d) ip_addr="%s/${prefix}" ;; `, ord, p.PeerAddresses[ord])
 			}
 			caseScript += fmt.Sprintf(
 				`*) base=$(echo %s | cut -d/ -f1); IFS=. read -r a b c d <<EOF
@@ -347,7 +363,11 @@ ip_last=$((d + ordinal + 2)); `+
 	// Stork agent sidecar: shares PID namespace and reads active config.
 	var shareProcessNamespace *bool
 	if p.StorkAgent != nil {
-		storkContainer := buildStorkAgentContainer(p.StorkAgent, ActiveConfigVolumeName)
+		// StatefulSet pods have stable DNS names through the headless Service,
+		// so register the agent under that name rather than the pod IP.
+		sp := *p.StorkAgent
+		sp.AgentDomain = fmt.Sprintf("%s.%s.svc.cluster.local", HeadlessServiceName(p.CRName, p.Component), p.Namespace)
+		storkContainer := buildStorkAgentContainer(&sp, ActiveConfigVolumeName, addCaps)
 		containers = append(containers, storkContainer)
 		t := true
 		shareProcessNamespace = &t
@@ -396,7 +416,7 @@ ip_last=$((d + ordinal + 2)); `+
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
+					Labels:      podTemplateLabels(labels, p.StorkAgent),
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
