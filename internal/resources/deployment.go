@@ -338,7 +338,7 @@ func buildSecretEnvSubstCommand(envVars []corev1.EnvVar, origCmd []string) []str
 	for _, ev := range envVars {
 		// Replace literal $VAR_NAME in the config with the env var value.
 		// Use | as sed delimiter to avoid conflicts with base64/URL characters.
-		sedExpr += fmt.Sprintf(`sed -i "s|\$%s|${%s}|g" %s/*.json; `, ev.Name, ev.Name, ConfigMountPath)
+		sedExpr += fmt.Sprintf(`sed -i "s|\$%s|${%s}|g" %s/*; `, ev.Name, ev.Name, ConfigMountPath)
 	}
 
 	// Build the full command: copy template -> sed substitute -> exec original command.
