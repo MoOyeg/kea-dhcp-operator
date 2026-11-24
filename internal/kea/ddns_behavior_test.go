@@ -453,9 +453,11 @@ func TestDDNSConfigAcceptedByKea(t *testing.T) {
 	if os.Getenv("KEA_CONFIG_CHECK") != "1" {
 		t.Skip("set KEA_CONFIG_CHECK=1 to validate rendered configs with the Kea container images")
 	}
+	// The check was explicitly requested, so a missing tool is a failure,
+	// not a silent skip that would let CI report success without parsing.
 	podman, err := exec.LookPath("podman")
 	if err != nil {
-		t.Skip("podman not found")
+		t.Fatal("KEA_CONFIG_CHECK=1 but podman is not installed")
 	}
 	repo := os.Getenv("KEA_IMAGE_REPO")
 	if repo == "" {
@@ -464,6 +466,18 @@ func TestDDNSConfigAcceptedByKea(t *testing.T) {
 	tag := os.Getenv("KEA_IMAGE_TAG")
 	if tag == "" {
 		tag = "3.0.2"
+	}
+	// Record exactly which images were checked.
+	for _, v := range []string{"4", "6"} {
+		image := repo + "/kea-dhcp" + v + ":" + tag
+		if out, err := exec.Command(podman, "pull", "-q", image).CombinedOutput(); err != nil {
+			t.Fatalf("pulling %s: %v\n%s", image, err, out)
+		}
+		digest, err := exec.Command(podman, "image", "inspect", "--format", "{{.Digest}}", image).Output()
+		if err != nil {
+			t.Fatalf("inspecting %s: %v", image, err)
+		}
+		t.Logf("checking against %s@%s", image, strings.TrimSpace(string(digest)))
 	}
 
 	for _, f := range ddnsFixtures {

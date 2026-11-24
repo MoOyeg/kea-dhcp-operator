@@ -18,8 +18,10 @@ package controller
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -66,13 +68,12 @@ var _ = BeforeSuite(func() {
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 
-		// The BinaryAssetsDirectory is only required if you want to run the tests directly
-		// without call the makefile target test. If not informed it will look for the
-		// default path defined in controller-runtime which is /usr/local/kubebuilder/.
-		// Note that you must have the required binaries setup under the bin directory to perform
-		// the tests directly. When we run make test it will be setup and used automatically.
-		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
-			fmt.Sprintf("1.30.0-%s-%s", runtime.GOOS, runtime.GOARCH)),
+		// `make test` sets KUBEBUILDER_ASSETS from ENVTEST_K8S_VERSION, the
+		// single place that picks the Kubernetes version. A directory set here
+		// would win over that variable, so only fall back to the binaries
+		// `make test` downloaded when the variable is unset (go test run
+		// directly).
+		BinaryAssetsDirectory: localEnvtestAssets(),
 	}
 
 	var err error
@@ -97,3 +98,17 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// localEnvtestAssets returns "" when KUBEBUILDER_ASSETS is set, and otherwise
+// the lexically last envtest binary directory under bin/k8s for this platform.
+func localEnvtestAssets() string {
+	if os.Getenv("KUBEBUILDER_ASSETS") != "" {
+		return ""
+	}
+	dirs, _ := filepath.Glob(filepath.Join("..", "..", "bin", "k8s", fmt.Sprintf("*-%s-%s", runtime.GOOS, runtime.GOARCH)))
+	if len(dirs) == 0 {
+		return ""
+	}
+	sort.Strings(dirs)
+	return dirs[len(dirs)-1]
+}
