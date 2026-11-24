@@ -127,9 +127,7 @@ func (r *Dhcp4ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]b
 
 	// Hooks libraries - start with user-specified, add DB hook if needed, then HA hooks
 	hooks := renderHooksLibraries(s.HooksLibraries)
-	if dbHook := renderDBHook(s.LeaseDatabase); dbHook != nil {
-		hooks = append(hooks, dbHook)
-	}
+	hooks = appendDBHooks(hooks, s.LeaseDatabase, s.HostsDatabase, s.HostsDatabases)
 	if s.HighAvailability != nil {
 		var haPort int32
 		if s.ControlSocket != nil && s.ControlSocket.SocketPort != nil {

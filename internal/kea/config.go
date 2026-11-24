@@ -314,6 +314,38 @@ func renderDBHook(db *keav1alpha1.DatabaseConfig) map[string]interface{} {
 	}
 }
 
+// appendDBHooks adds the backend hook of every database that needs one, the
+// lease database and each hosts database alike: Kea 3.0 only registers the
+// MySQL and PostgreSQL lease and host backends once their hook is loaded.
+// Each library is added once, and not at all when the user's hooks list
+// already loads it.
+func appendDBHooks(hooks []map[string]interface{}, lease, hosts *keav1alpha1.DatabaseConfig, hostsList []keav1alpha1.DatabaseConfig) []map[string]interface{} {
+	loaded := map[string]bool{}
+	for _, h := range hooks {
+		if lib, ok := h[fieldLibrary].(string); ok {
+			loaded[lib] = true
+		}
+	}
+	dbs := make([]*keav1alpha1.DatabaseConfig, 0, 2+len(hostsList))
+	dbs = append(dbs, lease, hosts)
+	for i := range hostsList {
+		dbs = append(dbs, &hostsList[i])
+	}
+	for _, db := range dbs {
+		hook := renderDBHook(db)
+		if hook == nil {
+			continue
+		}
+		lib := hook[fieldLibrary].(string)
+		if loaded[lib] {
+			continue
+		}
+		loaded[lib] = true
+		hooks = append(hooks, hook)
+	}
+	return hooks
+}
+
 // renderControlSocket converts a ControlSocket to a JSON-ready map.
 func renderControlSocket(cs *keav1alpha1.ControlSocket) map[string]interface{} {
 	if cs == nil {
