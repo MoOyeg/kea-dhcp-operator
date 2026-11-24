@@ -126,30 +126,32 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
-	// 4. Render and reconcile configuration.
+	// 4. Render and reconcile configuration. Everything is rendered and
+	// validated before the first write, and a failed write stops the
+	// reconcile before the workload template can point at the new revision.
 	var configHash string
 
 	if haEnabled {
-		// HA mode: create per-ordinal ConfigMaps with different this-server-name.
-		configHash = r.reconcileHAConfigs(ctx, renderer, server, component, labels, *replicas)
+		// HA mode: one ConfigMap per ordinal, each with its own this-server-name.
+		plan, err := planHAConfigs(renderer, server.Spec.HighAvailability, *replicas)
+		if err != nil {
+			return r.failDhcp4Render(ctx, server, err)
+		}
+		if err := r.applyHAConfigs(ctx, server, component, labels, plan); err != nil {
+			return r.failDhcp4Apply(ctx, server, err)
+		}
+		configHash = plan.hash
 	} else {
 		// Standard mode: single ConfigMap.
 		configJSON, err := renderer.RenderJSON()
 		if err != nil {
-			setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-			server.Status.Phase = keav1alpha1.PhaseError
-			if statusErr := r.Status().Update(ctx, server); statusErr != nil {
-				logger.Error(statusErr, "failed to update status after config render error")
-			}
-			r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigRenderError", "Failed to render configuration: %v", err)
-			return ctrl.Result{}, fmt.Errorf("rendering config: %w", err)
+			return r.failDhcp4Render(ctx, server, err)
 		}
-		configHash = kea.ComputeHash(configJSON)
-
 		cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
 		if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling ConfigMap: %w", err)
+			return r.failDhcp4Apply(ctx, server, fmt.Errorf("writing ConfigMap: %w", err))
 		}
+		configHash = kea.ComputeHash(configJSON)
 	}
 
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered", "Configuration rendered successfully")
@@ -537,6 +539,7 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	server.Status.ConfigHash = configHash
 	server.Status.ConfigMapRef = resources.ConfigMapName(server.Name, component)
 	server.Status.ObservedGeneration = server.Generation
+	resolveCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "Reconciled", "Configuration applied")
 
 	// Compute NAD addresses from subnet + replica count.
 	server.Status.NADAddresses = computeNADAddresses(nadSubnet(server), int(*replicas))
@@ -558,49 +561,54 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	return nil
 }
 
-// reconcileHAConfigs creates per-ordinal ConfigMaps for HA mode and returns
-// a combined config hash. Each ConfigMap has the full Kea config but with a
-// different this-server-name matching the HA peer at that ordinal.
-func (r *KeaDhcp4ServerReconciler) reconcileHAConfigs(
+// applyHAConfigs writes the per-ordinal ConfigMaps of a rendered plan and
+// returns the first write error. The ConfigMaps are still updated in place,
+// so a failure can leave earlier ordinals on the new configuration until the
+// retry succeeds; the caller never advances the StatefulSet in that case.
+func (r *KeaDhcp4ServerReconciler) applyHAConfigs(
 	ctx context.Context,
-	renderer *kea.Dhcp4ConfigRenderer,
 	server *keav1alpha1.KeaDhcp4Server,
 	component string,
 	labels map[string]string,
-	replicas int32,
-) string {
-	logger := log.FromContext(ctx)
-	ha := server.Spec.HighAvailability
-	var combinedHash string
-
-	for i := int32(0); i < replicas; i++ {
-		// Determine server name for this ordinal from the peers list.
-		serverName := fmt.Sprintf("server%d", i+1)
-		if int(i) < len(ha.Peers) {
-			serverName = ha.Peers[i].Name
-		}
-
-		configJSON, err := renderer.RenderJSONWithServerName(serverName)
-		if err != nil {
-			logger.Error(err, "failed to render HA config", "ordinal", i)
-			continue
-		}
-
-		combinedHash += kea.ComputeHash(configJSON)
-
-		cmName := resources.HAConfigMapName(server.Name, component, int(i))
+	plan *haConfigPlan,
+) error {
+	for i, configJSON := range plan.configs {
 		cm := &corev1.ConfigMap{
-			ObjectMeta: resources.ConfigMapMeta(cmName, server.Namespace, labels),
+			ObjectMeta: resources.ConfigMapMeta(resources.HAConfigMapName(server.Name, component, i), server.Namespace, labels),
 			Data: map[string]string{
 				resources.ConfigFileName(component): string(configJSON),
 			},
 		}
 		if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
-			logger.Error(err, "failed to reconcile HA ConfigMap", "ordinal", i)
+			return fmt.Errorf("writing HA ConfigMap for ordinal %d: %w", i, err)
 		}
 	}
+	return nil
+}
 
-	return kea.ComputeHash([]byte(combinedHash))
+// failDhcp4Render records a specification that cannot be rendered and stops
+// the reconcile before anything is written.
+func (r *KeaDhcp4ServerReconciler) failDhcp4Render(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, err error) (ctrl.Result, error) {
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
+	server.Status.Phase = keav1alpha1.PhaseError
+	if statusErr := r.Status().Update(ctx, server); statusErr != nil {
+		log.FromContext(ctx).Error(statusErr, "failed to update status after config render error")
+	}
+	r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigRenderError", "Failed to render configuration: %v", err)
+	return ctrl.Result{}, fmt.Errorf("rendering config: %w", err)
+}
+
+// failDhcp4Apply records a valid configuration that could not be written.
+// status.configHash keeps the last applied revision, and the workload is not
+// touched, so nothing claims the new configuration is running.
+func (r *KeaDhcp4ServerReconciler) failDhcp4Apply(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, err error) (ctrl.Result, error) {
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered", "Configuration rendered successfully")
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", "ConfigApplyError", err.Error())
+	if statusErr := r.Status().Update(ctx, server); statusErr != nil {
+		log.FromContext(ctx).Error(statusErr, "failed to update status after config apply error")
+	}
+	r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigApplyError", "Failed to apply configuration: %v", err)
+	return ctrl.Result{}, fmt.Errorf("applying config: %w", err)
 }
 
 // nadInterface returns the first non-standard network interface from the CR's

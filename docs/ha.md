@@ -51,6 +51,8 @@ The operator handles:
 - **Pod anti-affinity** — HA pods are automatically spread across different nodes using preferred pod anti-affinity on `kubernetes.io/hostname`, ensuring primary and secondary peers don't share the same node (soft constraint — won't block scheduling if only one node is available)
 - **Static peer addresses** — optionally assign fixed IP addresses to each peer on the NAD interface via the `address` field on each peer
 
+Each StatefulSet ordinal takes the peer at the same position in `peers` as its identity, so `replicas` must not exceed the number of declared peers and peer names must be unique. A spec that breaks either rule, or that the renderer rejects for any ordinal, sets `ConfigurationValid=False` and nothing is written. If a ConfigMap write fails, the StatefulSet keeps its current configuration hash, the CR reports `Degraded=True` with reason `ConfigApplyError`, and the next reconcile retries.
+
 ---
 
 ## Prerequisites
@@ -263,7 +265,7 @@ dhcp4-ha   Running   2          2m
 
 ### 4.4 Check Init Container DNS Resolution
 
-The init container resolves peer hostnames to IPs. Verify it worked:
+The init container resolves peer hostnames to IPs. It never prints the selected configuration, because that file holds the expanded database credentials. Verify it worked:
 
 ```bash
 kubectl logs -n kea-system dhcp4-ha-dhcp4-0 -c config-selector
