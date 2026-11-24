@@ -10,7 +10,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 status=0
-paths=(api config/crd/bases config/rbac)
+# Only generator output: hand-written API types are not "out of date".
+paths=(api/v1alpha1/zz_generated.deepcopy.go config/crd/bases config/rbac)
 if ! git diff --quiet -- "${paths[@]}"; then
 	echo "Generated files are out of date. Run 'make generate manifests' and commit the result:" >&2
 	git --no-pager diff --stat -- "${paths[@]}" >&2
