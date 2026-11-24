@@ -70,6 +70,40 @@ func setIfNotEmpty(m map[string]interface{}, key string, val string) {
 	}
 }
 
+func renderDhcpDdnsConfig(config *keav1alpha1.DhcpDdnsConfig) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	result := map[string]interface{}{}
+	setIfNotNil(result, "enable-updates", config.EnableUpdates)
+	setIfNotEmpty(result, "server-ip", config.ServerIP)
+	setIfNotNil(result, "server-port", config.ServerPort)
+	setIfNotEmpty(result, "sender-ip", config.SenderIP)
+	setIfNotNil(result, "sender-port", config.SenderPort)
+	setIfNotNil(result, "max-queue-size", config.MaxQueueSize)
+	setIfNotEmpty(result, "ncr-protocol", config.NCRProtocol)
+	setIfNotEmpty(result, "ncr-format", config.NCRFormat)
+	return result
+}
+
+func renderDDNSBehavior(target map[string]interface{}, behavior keav1alpha1.DDNSBehavior) {
+	setIfNotNil(target, "ddns-send-updates", behavior.DDNSSendUpdates)
+	setIfNotNil(target, "ddns-override-no-update", behavior.DDNSOverrideNoUpdate)
+	setIfNotNil(target, "ddns-override-client-update", behavior.DDNSOverrideClientUpdate)
+	setIfNotEmpty(target, "ddns-replace-client-name", behavior.DDNSReplaceClientName)
+	setIfNotEmpty(target, "ddns-generated-prefix", behavior.DDNSGeneratedPrefix)
+	setIfNotEmpty(target, "ddns-qualifying-suffix", behavior.DDNSQualifyingSuffix)
+	setIfNotNil(target, "ddns-update-on-renew", behavior.DDNSUpdateOnRenew)
+	setIfNotEmpty(target, "ddns-conflict-resolution-mode", behavior.DDNSConflictResolutionMode)
+	setIfNotNil(target, "ddns-ttl", behavior.DDNSTTL)
+	setIfNotNil(target, "ddns-ttl-percent", behavior.DDNSTTLPercent)
+	setIfNotNil(target, "ddns-ttl-min", behavior.DDNSTTLMin)
+	setIfNotNil(target, "ddns-ttl-max", behavior.DDNSTTLMax)
+	setIfNotEmpty(target, "hostname-char-set", behavior.HostnameCharSet)
+	setIfNotEmpty(target, "hostname-char-replacement", behavior.HostnameCharReplacement)
+	setIfNotNil(target, "ddns-use-conflict-resolution", behavior.DDNSUseConflictResolution)
+}
+
 // renderOptionData converts a slice of OptionData to JSON-ready maps.
 func renderOptionData(opts []keav1alpha1.OptionData) []map[string]interface{} {
 	if len(opts) == 0 {

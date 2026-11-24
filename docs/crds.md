@@ -41,7 +41,10 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 - `loggers[]` — logging configuration
 - `high-availability` — HA configuration (see below)
 - `multi-threading` — thread pool and packet queue settings
-- DDNS parameters (`ddns-send-updates`, `ddns-qualifying-suffix`, etc.)
+- DHCP-DDNS connectivity (`dhcp-ddns`) and inheritable DDNS behavior
+  (`ddns-send-updates`, `ddns-override-client-update`, conflict resolution,
+  TTL, hostname sanitization, etc.) at global, shared-network, subnet, and
+  address-pool scope
 - PXE boot parameters (`next-server`, `boot-file-name`)
 
 **Deployment:**
@@ -182,6 +185,8 @@ The operator:
 ### Integration with DHCP Servers
 
 DHCP servers must be configured to send NCR messages to D2:
+- Set `dhcp-ddns.enable-updates: true`; configure the D2 address and port here
+  when it does not use the Kea defaults (`127.0.0.1:53001`)
 - Set `ddns-send-updates: true` on KeaDhcp4Server or KeaDhcp6Server
 - Set `ddns-qualifying-suffix` to the DNS domain
 - D2 listens on the configured address/port for NCR messages

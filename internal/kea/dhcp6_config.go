@@ -167,8 +167,26 @@ func (r *Dhcp6ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]b
 	setIfNotNil(dhcp6, "rapid-commit", s.RapidCommit)
 
 	// DDNS parameters
-	setIfNotNil(dhcp6, "ddns-send-updates", s.DDNSSendUpdates)
-	setIfNotEmpty(dhcp6, "ddns-qualifying-suffix", s.DDNSQualifyingSuffix)
+	if ddns := renderDhcpDdnsConfig(s.DhcpDdns); ddns != nil {
+		dhcp6["dhcp-ddns"] = ddns
+	}
+	renderDDNSBehavior(dhcp6, keav1alpha1.DDNSBehavior{
+		DDNSSendUpdates:            s.DDNSSendUpdates,
+		DDNSOverrideNoUpdate:       s.DDNSOverrideNoUpdate,
+		DDNSOverrideClientUpdate:   s.DDNSOverrideClientUpdate,
+		DDNSReplaceClientName:      s.DDNSReplaceClientName,
+		DDNSGeneratedPrefix:        s.DDNSGeneratedPrefix,
+		DDNSQualifyingSuffix:       s.DDNSQualifyingSuffix,
+		DDNSUpdateOnRenew:          s.DDNSUpdateOnRenew,
+		DDNSConflictResolutionMode: s.DDNSConflictResolutionMode,
+		DDNSTTL:                    s.DDNSTTL,
+		DDNSTTLPercent:             s.DDNSTTLPercent,
+		DDNSTTLMin:                 s.DDNSTTLMin,
+		DDNSTTLMax:                 s.DDNSTTLMax,
+		HostnameCharSet:            s.HostnameCharSet,
+		HostnameCharReplacement:    s.HostnameCharReplacement,
+		DDNSUseConflictResolution:  s.DDNSUseConflictResolution,
+	})
 
 	// Multi-threading
 	if s.MultiThreading != nil {
@@ -247,6 +265,7 @@ func (r *Dhcp6ConfigRenderer) renderSubnet6(sub keav1alpha1.Subnet6) map[string]
 	setIfNotNil(sm, "rebind-timer", sub.RebindTimer)
 	setIfNotNil(sm, "rapid-commit", sub.RapidCommit)
 	setIfNotEmpty(sm, "reservation-mode", sub.ReservationMode)
+	renderDDNSBehavior(sm, sub.DDNSBehavior)
 	return sm
 }
 
@@ -262,6 +281,7 @@ func (r *Dhcp6ConfigRenderer) renderPool6(p keav1alpha1.Pool6) map[string]interf
 	if len(p.RequireClientClasses) > 0 {
 		pm["require-client-classes"] = p.RequireClientClasses
 	}
+	renderDDNSBehavior(pm, p.DDNSBehavior)
 	return pm
 }
 
@@ -278,6 +298,9 @@ func (r *Dhcp6ConfigRenderer) renderPDPool(pd keav1alpha1.PDPool) map[string]int
 		pm["option-data"] = opts
 	}
 	setIfNotEmpty(pm, "client-class", pd.ClientClass)
+	if len(pd.RequireClientClasses) > 0 {
+		pm["require-client-classes"] = pd.RequireClientClasses
+	}
 	return pm
 }
 
@@ -309,11 +332,17 @@ func (r *Dhcp6ConfigRenderer) renderSharedNetworks6() []map[string]interface{} {
 			}
 		}
 		setIfNotEmpty(snm, "client-class", sn.ClientClass)
+		if len(sn.RequireClientClasses) > 0 {
+			snm["require-client-classes"] = sn.RequireClientClasses
+		}
 		setIfNotNil(snm, "preferred-lifetime", sn.PreferredLifetime)
 		setIfNotNil(snm, "valid-lifetime", sn.ValidLifetime)
+		setIfNotNil(snm, "min-valid-lifetime", sn.MinValidLifetime)
+		setIfNotNil(snm, "max-valid-lifetime", sn.MaxValidLifetime)
 		setIfNotNil(snm, "renew-timer", sn.RenewTimer)
 		setIfNotNil(snm, "rebind-timer", sn.RebindTimer)
 		setIfNotNil(snm, "rapid-commit", sn.RapidCommit)
+		renderDDNSBehavior(snm, sn.DDNSBehavior)
 		result = append(result, snm)
 	}
 	return result

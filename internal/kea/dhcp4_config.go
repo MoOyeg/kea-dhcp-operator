@@ -166,13 +166,26 @@ func (r *Dhcp4ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]b
 	setIfNotEmpty(dhcp4, "server-hostname", s.ServerHostname)
 
 	// DDNS parameters
-	setIfNotNil(dhcp4, "ddns-send-updates", s.DDNSSendUpdates)
-	setIfNotNil(dhcp4, "ddns-override-no-update", s.DDNSOverrideNoUpdate)
-	setIfNotNil(dhcp4, "ddns-override-client-update", s.DDNSOverrideClientUpdate)
-	setIfNotEmpty(dhcp4, "ddns-replace-client-name", s.DDNSReplaceClientName)
-	setIfNotEmpty(dhcp4, "ddns-generated-prefix", s.DDNSGeneratedPrefix)
-	setIfNotEmpty(dhcp4, "ddns-qualifying-suffix", s.DDNSQualifyingSuffix)
-	setIfNotNil(dhcp4, "ddns-use-conflict-resolution", s.DDNSUseConflictResolution)
+	if ddns := renderDhcpDdnsConfig(s.DhcpDdns); ddns != nil {
+		dhcp4["dhcp-ddns"] = ddns
+	}
+	renderDDNSBehavior(dhcp4, keav1alpha1.DDNSBehavior{
+		DDNSSendUpdates:            s.DDNSSendUpdates,
+		DDNSOverrideNoUpdate:       s.DDNSOverrideNoUpdate,
+		DDNSOverrideClientUpdate:   s.DDNSOverrideClientUpdate,
+		DDNSReplaceClientName:      s.DDNSReplaceClientName,
+		DDNSGeneratedPrefix:        s.DDNSGeneratedPrefix,
+		DDNSQualifyingSuffix:       s.DDNSQualifyingSuffix,
+		DDNSUpdateOnRenew:          s.DDNSUpdateOnRenew,
+		DDNSConflictResolutionMode: s.DDNSConflictResolutionMode,
+		DDNSTTL:                    s.DDNSTTL,
+		DDNSTTLPercent:             s.DDNSTTLPercent,
+		DDNSTTLMin:                 s.DDNSTTLMin,
+		DDNSTTLMax:                 s.DDNSTTLMax,
+		HostnameCharSet:            s.HostnameCharSet,
+		HostnameCharReplacement:    s.HostnameCharReplacement,
+		DDNSUseConflictResolution:  s.DDNSUseConflictResolution,
+	})
 
 	// Multi-threading
 	if s.MultiThreading != nil {
@@ -261,6 +274,7 @@ func (r *Dhcp4ConfigRenderer) renderSubnet4(sub keav1alpha1.Subnet4) map[string]
 	setIfNotEmpty(sm, "boot-file-name", sub.BootFileName)
 	setIfNotEmpty(sm, "server-hostname", sub.ServerHostname)
 	setIfNotEmpty(sm, "user-context", sub.UserContext)
+	renderDDNSBehavior(sm, sub.DDNSBehavior)
 	return sm
 }
 
@@ -276,6 +290,7 @@ func (r *Dhcp4ConfigRenderer) renderPool4(p keav1alpha1.Pool4) map[string]interf
 	if len(p.RequireClientClasses) > 0 {
 		pm["require-client-classes"] = p.RequireClientClasses
 	}
+	renderDDNSBehavior(pm, p.DDNSBehavior)
 	return pm
 }
 
@@ -315,6 +330,7 @@ func (r *Dhcp4ConfigRenderer) renderSharedNetworks4() []map[string]interface{} {
 		setIfNotNil(snm, "renew-timer", sn.RenewTimer)
 		setIfNotNil(snm, "rebind-timer", sn.RebindTimer)
 		setIfNotNil(snm, "authoritative", sn.Authoritative)
+		renderDDNSBehavior(snm, sn.DDNSBehavior)
 		result = append(result, snm)
 	}
 	return result

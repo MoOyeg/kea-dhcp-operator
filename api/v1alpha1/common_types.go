@@ -145,6 +145,118 @@ type InterfacesConfig struct {
 	ServiceSocketsRetryWaitTime *int32 `json:"service-sockets-retry-wait-time,omitempty"`
 }
 
+// ========== DHCP-DDNS Configuration ==========
+
+// DhcpDdnsConfig configures connectivity from a DHCP server to Kea D2.
+type DhcpDdnsConfig struct {
+	// Enable connectivity to the Kea DHCP-DDNS server.
+	// +optional
+	EnableUpdates *bool `json:"enable-updates,omitempty"`
+
+	// IP address on which the Kea DHCP-DDNS server listens.
+	// +optional
+	ServerIP string `json:"server-ip,omitempty"`
+
+	// Port on which the Kea DHCP-DDNS server listens.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	ServerPort *int32 `json:"server-port,omitempty"`
+
+	// Source IP address used to send NameChangeRequests.
+	// +optional
+	SenderIP string `json:"sender-ip,omitempty"`
+
+	// Source port used to send NameChangeRequests. Zero selects a port automatically.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	SenderPort *int32 `json:"sender-port,omitempty"`
+
+	// Maximum number of NameChangeRequests queued for delivery.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxQueueSize *int32 `json:"max-queue-size,omitempty"`
+
+	// Protocol used to send NameChangeRequests.
+	// +optional
+	// +kubebuilder:validation:Enum=UDP
+	NCRProtocol string `json:"ncr-protocol,omitempty"`
+
+	// NameChangeRequest payload format.
+	// +optional
+	// +kubebuilder:validation:Enum=JSON
+	NCRFormat string `json:"ncr-format,omitempty"`
+}
+
+// DDNSBehavior defines inheritable DDNS behavior at global, shared-network,
+// subnet, and address-pool scope.
+type DDNSBehavior struct {
+	// Send DDNS updates for this scope.
+	// +optional
+	DDNSSendUpdates *bool `json:"ddns-send-updates,omitempty"`
+
+	// Ignore a client's request not to perform DDNS updates.
+	// +optional
+	DDNSOverrideNoUpdate *bool `json:"ddns-override-no-update,omitempty"`
+
+	// Override a client's request to perform its own DNS updates.
+	// +optional
+	DDNSOverrideClientUpdate *bool `json:"ddns-override-client-update,omitempty"`
+
+	// Client hostname replacement policy.
+	// +optional
+	// +kubebuilder:validation:Enum=never;always;when-present;when-not-present
+	DDNSReplaceClientName string `json:"ddns-replace-client-name,omitempty"`
+
+	// Prefix used for generated hostnames.
+	// +optional
+	DDNSGeneratedPrefix string `json:"ddns-generated-prefix,omitempty"`
+
+	// DNS suffix appended to qualified client hostnames.
+	// +optional
+	DDNSQualifyingSuffix string `json:"ddns-qualifying-suffix,omitempty"`
+
+	// Send DDNS updates whenever a lease is renewed.
+	// +optional
+	DDNSUpdateOnRenew *bool `json:"ddns-update-on-renew,omitempty"`
+
+	// DHCID-based DDNS conflict resolution mode.
+	// +optional
+	// +kubebuilder:validation:Enum=check-with-dhcid;no-check-with-dhcid;check-exists-with-dhcid;no-check-without-dhcid
+	DDNSConflictResolutionMode string `json:"ddns-conflict-resolution-mode,omitempty"`
+
+	// Fixed DNS record TTL in seconds.
+	// +optional
+	DDNSTTL *int32 `json:"ddns-ttl,omitempty"`
+
+	// DNS record TTL as a percentage of the lease lifetime.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	DDNSTTLPercent *apiextensionsv1.JSON `json:"ddns-ttl-percent,omitempty"`
+
+	// Minimum DNS record TTL in seconds.
+	// +optional
+	DDNSTTLMin *int32 `json:"ddns-ttl-min,omitempty"`
+
+	// Maximum DNS record TTL in seconds.
+	// +optional
+	DDNSTTLMax *int32 `json:"ddns-ttl-max,omitempty"`
+
+	// Regular expression defining characters permitted in generated hostnames.
+	// +optional
+	HostnameCharSet string `json:"hostname-char-set,omitempty"`
+
+	// Replacement for disallowed hostname characters.
+	// +optional
+	HostnameCharReplacement string `json:"hostname-char-replacement,omitempty"`
+
+	// Legacy boolean equivalent of ddns-conflict-resolution-mode.
+	// +optional
+	DDNSUseConflictResolution *bool `json:"ddns-use-conflict-resolution,omitempty"`
+}
+
 // ========== DHCP Options ==========
 
 // OptionData defines a DHCP option value.

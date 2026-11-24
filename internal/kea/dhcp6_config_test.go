@@ -21,7 +21,13 @@ import (
 	"testing"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
+
+var _ = keav1alpha1.KeaDhcp6ServerSpec{
+	DDNSSendUpdates:      nil,
+	DDNSQualifyingSuffix: "",
+}
 
 func TestDhcp6MinimalConfig(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
@@ -225,6 +231,87 @@ func TestDhcp6FullConfig(t *testing.T) {
 	}
 	if dhcp6["rapid-commit"] != true {
 		t.Errorf("expected rapid-commit true, got %v", dhcp6["rapid-commit"])
+	}
+}
+
+func TestDhcp6WithDDNSConfiguration(t *testing.T) {
+	enabled := true
+	sendUpdates := true
+	overrideClientUpdate := true
+	updateOnRenew := true
+	ttl := int32(900)
+	ttlPercent := apiextensionsv1.JSON{Raw: []byte("0.5")}
+	spec := &keav1alpha1.KeaDhcp6ServerSpec{
+		InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: []string{testInterfaceEth0}},
+		DhcpDdns: &keav1alpha1.DhcpDdnsConfig{
+			EnableUpdates: &enabled,
+			ServerIP:      "2001:db8::53",
+		},
+		DDNSSendUpdates:            &sendUpdates,
+		DDNSOverrideClientUpdate:   &overrideClientUpdate,
+		DDNSReplaceClientName:      "when-not-present",
+		DDNSGeneratedPrefix:        "dhcp",
+		DDNSQualifyingSuffix:       "example.test",
+		DDNSUpdateOnRenew:          &updateOnRenew,
+		DDNSConflictResolutionMode: "check-with-dhcid",
+		DDNSTTL:                    &ttl,
+		DDNSTTLPercent:             &ttlPercent,
+		HostnameCharSet:            "[^a-zA-Z0-9]",
+		HostnameCharReplacement:    "-",
+		Subnet6: []keav1alpha1.Subnet6{{
+			ID:           1,
+			Subnet:       "2001:db8:1::/64",
+			DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSSendUpdates: &sendUpdates},
+			Pools: []keav1alpha1.Pool6{{
+				Pool:         "2001:db8:1::100 - 2001:db8:1::1ff",
+				DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSOverrideClientUpdate: &overrideClientUpdate},
+			}},
+		}},
+		SharedNetworks: []keav1alpha1.SharedNetwork6{{
+			Name:         testSharedNetwork,
+			DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSQualifyingSuffix: "shared.example.test"},
+		}},
+	}
+
+	data, err := NewDhcp6ConfigRenderer(spec).RenderJSON()
+	if err != nil {
+		t.Fatalf("RenderJSON failed: %v", err)
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	dhcp6 := root["Dhcp6"].(map[string]interface{})
+	for _, key := range []string{
+		"dhcp-ddns", "ddns-send-updates", "ddns-override-client-update",
+		"ddns-replace-client-name", "ddns-generated-prefix", "ddns-qualifying-suffix",
+		"ddns-update-on-renew", "ddns-conflict-resolution-mode", "ddns-ttl",
+		"ddns-ttl-percent", "hostname-char-set", "hostname-char-replacement",
+	} {
+		if _, ok := dhcp6[key]; !ok {
+			t.Errorf("expected global DDNS key %q", key)
+		}
+	}
+
+	ddns := dhcp6["dhcp-ddns"].(map[string]interface{})
+	if ddns["enable-updates"] != true || ddns["server-ip"] != "2001:db8::53" {
+		t.Errorf("unexpected dhcp-ddns connectivity: %v", ddns)
+	}
+	if dhcp6["ddns-ttl-percent"] != 0.5 {
+		t.Errorf("expected numeric ddns-ttl-percent, got %v", dhcp6["ddns-ttl-percent"])
+	}
+	subnet := dhcp6["subnet6"].([]interface{})[0].(map[string]interface{})
+	if subnet["ddns-send-updates"] != true {
+		t.Errorf("expected subnet DDNS behavior, got %v", subnet)
+	}
+	pool := subnet["pools"].([]interface{})[0].(map[string]interface{})
+	if pool["ddns-override-client-update"] != true {
+		t.Errorf("expected pool DDNS behavior, got %v", pool)
+	}
+	network := dhcp6["shared-networks"].([]interface{})[0].(map[string]interface{})
+	if network["ddns-qualifying-suffix"] != "shared.example.test" {
+		t.Errorf("expected shared-network DDNS behavior, got %v", network)
 	}
 }
 
