@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -135,6 +136,123 @@ func withCredentialsRevision(annotations map[string]string, token string) map[st
 	}
 	out[resources.CredentialsRevisionAnnotation] = token
 	return out
+}
+
+// credentialRollout is the outcome of decideCredentialRollout.
+type credentialRollout struct {
+	// stamp is the pod template annotation value; "" leaves it off.
+	stamp string
+	// applied is the revision the pods run after this reconcile.
+	applied string
+	// pending is a newer revision held back; "" when there is none.
+	pending string
+}
+
+// decideCredentialRollout chooses the credentials revision to put on a pod
+// template. Changing it restarts the pods, which re-reads the credential env
+// vars but also discards anything kept in pod-local storage, notably memfile
+// leases on emptyDir. So:
+//
+//   - a new workload, or one already on the desired revision, simply gets it;
+//   - a workload created by a release without this annotation adopts the
+//     desired revision without a restart (an upgrade never rolls pods);
+//   - a newer revision rolls the pods when a configuration change restarts
+//     them anyway, when autoRoll says nothing is lost (database leases, or a
+//     component without leases), or when the user approved that exact
+//     revision; otherwise it is held back and reported as pending.
+//
+// existing is the current Deployment or StatefulSet, or nil.
+func decideCredentialRollout(existing client.Object, desired, configHash string, autoRoll bool, approved string) credentialRollout {
+	if desired == "" {
+		return credentialRollout{}
+	}
+	if existing == nil {
+		return credentialRollout{stamp: desired, applied: desired}
+	}
+	template := podTemplateAnnotations(existing)
+	stamped := template[resources.CredentialsRevisionAnnotation]
+	applied := stamped
+	if applied == "" {
+		applied = existing.GetAnnotations()[resources.AppliedCredentialsRevisionAnnotation]
+	}
+	configRoll := template[resources.ConfigHashAnnotation] != configHash
+	switch {
+	case applied == desired:
+		return credentialRollout{stamp: stamped, applied: desired}
+	case applied == "" && !configRoll:
+		return credentialRollout{applied: desired}
+	case configRoll || autoRoll || approved == desired:
+		return credentialRollout{stamp: desired, applied: desired}
+	default:
+		return credentialRollout{stamp: stamped, applied: applied, pending: desired}
+	}
+}
+
+// podTemplateAnnotations returns the pod template annotations of a
+// Deployment or StatefulSet (never nil), or nil for any other object.
+func podTemplateAnnotations(obj client.Object) map[string]string {
+	var annotations map[string]string
+	switch w := obj.(type) {
+	case *appsv1.Deployment:
+		annotations = w.Spec.Template.Annotations
+	case *appsv1.StatefulSet:
+		annotations = w.Spec.Template.Annotations
+	default:
+		return nil
+	}
+	if annotations == nil {
+		return map[string]string{}
+	}
+	return annotations
+}
+
+// leasesSurvivePodReplacement reports whether a DHCP server's leases outlive
+// its pods. Only a database backend qualifies: memfile leases live in an
+// emptyDir, and even an HA partner cannot be relied on to resynchronize them
+// during a rolling update that has no readiness gate on synchronization.
+func leasesSurvivePodReplacement(db *keav1alpha1.DatabaseConfig) bool {
+	return db != nil && (db.Type == keav1alpha1.DatabaseTypeMySQL || db.Type == keav1alpha1.DatabaseTypePostgreSQL)
+}
+
+// reportCredentialRollout sets or clears CredentialsRolloutPending.
+func reportCredentialRollout(conditions *[]keav1alpha1.ConditionStatus, r credentialRollout) {
+	if r.pending == "" {
+		for _, c := range *conditions {
+			if c.Type == keav1alpha1.ConditionTypeCredentialsRolloutPending {
+				setCondition(conditions, keav1alpha1.ConditionTypeCredentialsRolloutPending, "False", "CredentialsApplied", "The pods run the current credentials")
+				return
+			}
+		}
+		return
+	}
+	setCondition(conditions, keav1alpha1.ConditionTypeCredentialsRolloutPending, "True", "RestartWouldDiscardLeases", fmt.Sprintf(
+		"A referenced credential Secret changed, but restarting the pods would discard the memfile leases they keep in pod-local storage, "+
+			"so they still use the previous credentials. The new credentials are applied with the next configuration change, "+
+			"or now by setting the annotation %s=%s on this resource (this restarts the pods and loses their leases).",
+		resources.ApproveCredentialRolloutAnnotation, r.pending))
+}
+
+// planCredentialRollout looks up the current workload (into obj, an empty
+// Deployment or StatefulSet) and decides the credentials revision for its pod
+// template; see decideCredentialRollout.
+func planCredentialRollout(ctx context.Context, c client.Reader, key types.NamespacedName, obj client.Object,
+	desired, configHash string, autoRoll bool, approved string) (credentialRollout, error) {
+	if err := c.Get(ctx, key, obj); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return credentialRollout{}, fmt.Errorf("reading workload %s: %w", key.Name, err)
+		}
+		return decideCredentialRollout(nil, desired, configHash, autoRoll, approved), nil
+	}
+	return decideCredentialRollout(obj, desired, configHash, autoRoll, approved), nil
+}
+
+// withAppliedCredentials records the applied credentials revision on a
+// workload object's own metadata.
+func withAppliedCredentials(obj client.Object, applied string) {
+	if applied == "" {
+		return
+	}
+	mergeOperatorAnnotations(obj, map[string]string{resources.AppliedCredentialsRevisionAnnotation: applied})
 }
 
 // markCredentialsUnavailable records a missing credential. The caller writes

@@ -151,7 +151,16 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		affinity = ddns.Spec.Placement.Affinity
 		podAnnotations = ddns.Spec.Placement.PodAnnotations
 	}
-	podAnnotations = withCredentialsRevision(podAnnotations, credRevision)
+	// No leases to lose: rotations roll automatically; an upgrade still adopts
+	// the running revision instead of restarting.
+	rollout, err := planCredentialRollout(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(ddns.Name, component), Namespace: ddns.Namespace}, &appsv1.Deployment{},
+		credRevision, configHash, true, "")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reportCredentialRollout(&ddns.Status.Conditions, rollout)
+	podAnnotations = withCredentialsRevision(podAnnotations, rollout.stamp)
 
 	dp := resources.DeploymentParams{
 		Namespace:          ddns.Namespace,
@@ -174,6 +183,7 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, rollout.applied)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, ddns, deploy); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling Deployment: %w", err)
 	}

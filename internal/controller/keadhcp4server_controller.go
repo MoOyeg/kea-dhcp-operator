@@ -168,7 +168,20 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 5. Extract common pod parameters.
 	pp := r.resolveDhcp4PodParams(server)
-	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, credRevision)
+	var current client.Object = &appsv1.Deployment{}
+	if haEnabled {
+		current = &appsv1.StatefulSet{}
+	}
+	rollout, err := planCredentialRollout(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, current,
+		credRevision, configHash, leasesSurvivePodReplacement(server.Spec.LeaseDatabase),
+		server.Annotations[resources.ApproveCredentialRolloutAnnotation])
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reportCredentialRollout(&server.Status.Conditions, rollout)
+	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, rollout.stamp)
+	pp.appliedCredentials = rollout.applied
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp4StorkAgent(ctx, server)
@@ -212,6 +225,8 @@ type dhcp4PodParams struct {
 	affinity       *corev1.Affinity
 	podAnnotations map[string]string
 	tlsSecretName  string
+	// appliedCredentials is recorded on the workload object.
+	appliedCredentials string
 }
 
 // resolveDhcp4PodParams extracts common pod parameters from the CR spec.
@@ -396,6 +411,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 		SecretEnvVars:      secretEnvVars,
 	}
 	sts := resources.BuildStatefulSet(sp)
+	withAppliedCredentials(sts, pp.appliedCredentials)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, sts); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling StatefulSet: %w", err)
 	}
@@ -453,6 +469,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, pp.appliedCredentials)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling Deployment: %w", err)
 	}

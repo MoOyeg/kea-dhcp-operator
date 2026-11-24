@@ -44,6 +44,7 @@ const (
 	testKeyUsername  = "username"
 	testKeyPassword  = "password"
 	testDBHost       = "db.example"
+	testHostsDBName  = "hosts"
 	testKeaName      = "kea"
 	testIfaceEth0    = "eth0"
 )
@@ -269,7 +270,7 @@ func TestDhcp4CredentialRotationRollsPods(t *testing.T) {
 	ctx := context.Background()
 	server := dhcp4WithLeaseDB(testDhcp4CR, testNamespaceDefault, testCredSecret)
 	server.Spec.HostsDatabases = []keav1alpha1.DatabaseConfig{{
-		Type: keav1alpha1.DatabaseTypeMySQL, Name: "hosts", Host: testDBHost,
+		Type: keav1alpha1.DatabaseTypeMySQL, Name: testHostsDBName, Host: testDBHost,
 		CredentialsSecretRef: &corev1.LocalObjectReference{Name: testOtherSecret},
 	}}
 	r, c := newDhcp4Reconciler(t, nil, server,
@@ -373,7 +374,7 @@ func reconcileWith(r interface {
 func TestCredentialComponentsStampRevisionAndWatchTheirSecrets(t *testing.T) {
 	const crName = "cred-parity"
 	meta := metav1.ObjectMeta{Name: crName, Namespace: testNamespaceDefault, UID: "uid-parity"}
-	hostsDB := keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMySQL, Name: "hosts", Host: testDBHost,
+	hostsDB := keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMySQL, Name: testHostsDBName, Host: testDBHost,
 		CredentialsSecretRef: &corev1.LocalObjectReference{Name: testOtherSecret}}
 	leaseDB := &keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMySQL, Name: testKeaName, Host: testDBHost,
 		CredentialsSecretRef: &corev1.LocalObjectReference{Name: testCredSecret}}

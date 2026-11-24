@@ -162,7 +162,14 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	pp := r.resolveDhcp6PodParams(server)
-	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, credRevision)
+	rollout, err := planCredentialRollout(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, &appsv1.Deployment{},
+		credRevision, configHash, leasesSurvivePodReplacement(server.Spec.LeaseDatabase), server.Annotations[resources.ApproveCredentialRolloutAnnotation])
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reportCredentialRollout(&server.Status.Conditions, rollout)
+	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, rollout.stamp)
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp6StorkAgent(ctx, server)
@@ -194,6 +201,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, rollout.applied)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling Deployment: %w", err)
 	}

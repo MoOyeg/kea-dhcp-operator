@@ -50,6 +50,19 @@ const (
 	// UIDs and resourceVersions of the credential Secrets a pod references
 	// (never their data), so updating one of them rolls the pods.
 	CredentialsRevisionAnnotation = "kea.openshift.io/credentials-revision"
+	// AppliedCredentialsRevisionAnnotation sits on the Deployment or
+	// StatefulSet object (not its pod template) and records the credentials
+	// revision its pods run. It lets the operator adopt running pods after an
+	// upgrade, and hold back a rollout, without changing the pod template.
+	AppliedCredentialsRevisionAnnotation = "kea.openshift.io/applied-credentials-revision"
+	// ApproveCredentialRolloutAnnotation goes on a KeaDhcp4Server or
+	// KeaDhcp6Server. Setting it to the revision a CredentialsRolloutPending
+	// condition names restarts the pods with that revision even though their
+	// memfile leases live in pod-local storage.
+	ApproveCredentialRolloutAnnotation = "kea.openshift.io/approve-credential-rollout"
+	// OperatorAnnotationPrefix is the prefix of the annotations the operator
+	// owns on the objects it manages.
+	OperatorAnnotationPrefix = "kea.openshift.io/"
 )
 
 // defaultComponentImage maps a component name to its default container image.

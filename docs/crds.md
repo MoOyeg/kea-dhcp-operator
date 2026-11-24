@@ -73,9 +73,28 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 
 ### Credential Secrets and rotation
 
-Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets reach Kea through environment variables read at pod startup. The operator watches every Secret these fields reference and stamps a `kea.openshift.io/credentials-revision` annotation on the pod template. The annotation is derived from the Secrets' names, UIDs and resource versions, never from their data. Updating a referenced Secret, or deleting and recreating it, therefore rolls the pods so they read the new value; any update counts, including a metadata-only one.
+Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets reach Kea through environment variables read at pod startup. The operator watches every Secret these fields reference, including ones marked `optional`, and tracks a credentials revision derived from the Secrets' names, UIDs and resource versions, never from their data. Any update to a referenced Secret counts, including a metadata-only one, and so does deleting and recreating it. An optional Secret that does not exist is allowed and tracked as absent.
 
-To rotate a database password: create the new credential in the database, update the Secret, wait for the pods to roll and reconnect, then revoke the old credential. A standalone server restarts once during the rollout.
+A new revision only reaches Kea when the pods restart, and a restart discards whatever the pods keep in pod-local storage. The operator therefore applies it as follows:
+
+| Configuration | What happens when a referenced Secret changes |
+|---------------|----------------------------------------------|
+| `lease-database` is MySQL or PostgreSQL | The pods roll once and read the new value. A standalone server restarts once. |
+| Control Agent, DDNS | The pods roll once; they keep no leases. |
+| Memfile leases (no `lease-database`, or `type: memfile`), standalone or HA | The pods are **not** restarted, because their lease files live in an `emptyDir` and a restart would let Kea hand out addresses that are still in use. The CR reports `CredentialsRolloutPending=True` naming the new revision. The pods keep the previous credentials until the next configuration change restarts them anyway, or until you approve that revision. |
+
+To apply a held revision immediately and accept losing the memfile leases, copy the revision from the condition message:
+
+```bash
+kubectl annotate kd4 <name> -n <namespace> --overwrite \
+  kea.openshift.io/approve-credential-rollout=<revision>
+```
+
+An approval covers only the revision it names; a later rotation is held again. To keep leases across the restart, export and import them as described in [Preserving memfile leases](ha.md#preserving-memfile-leases).
+
+Upgrading the operator never restarts pods to start tracking credentials: workloads created by an earlier release adopt their current revision, recorded on the Deployment or StatefulSet object, without a pod template change. A Secret rotated before the upgrade is therefore not detected until it changes again.
+
+To rotate a database password: create the new credential in the database (MySQL can keep both passwords with `RETAIN CURRENT PASSWORD`), update the Secret, wait for the pods to roll or approve the pending revision, then revoke the old credential.
 
 ---
 

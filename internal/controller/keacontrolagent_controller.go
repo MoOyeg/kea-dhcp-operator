@@ -151,7 +151,16 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		affinity = agent.Spec.Placement.Affinity
 		podAnnotations = agent.Spec.Placement.PodAnnotations
 	}
-	podAnnotations = withCredentialsRevision(podAnnotations, credRevision)
+	// No leases to lose: rotations roll automatically; an upgrade still adopts
+	// the running revision instead of restarting.
+	rollout, err := planCredentialRollout(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(agent.Name, component), Namespace: agent.Namespace}, &appsv1.Deployment{},
+		credRevision, configHash, true, "")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reportCredentialRollout(&agent.Status.Conditions, rollout)
+	podAnnotations = withCredentialsRevision(podAnnotations, rollout.stamp)
 
 	var tlsSecretName string
 	if agent.Spec.TLS != nil {
@@ -180,6 +189,7 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, rollout.applied)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, agent, deploy); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling Deployment: %w", err)
 	}
