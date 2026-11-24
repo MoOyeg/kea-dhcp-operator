@@ -1994,9 +1994,10 @@ spec:
                       interfaces:
                         description: |-
                           List of interface names or interface/address pairs to listen on.
-                          Interface names must contain only alphanumeric characters, hyphens, underscores, dots, or slashes.
+                          Interface names must contain only alphanumeric characters, hyphens, underscores, dots, slashes,
+                          or colons (for IPv6 interface/address pairs such as "eth0/2001:db8::1").
                         items:
-                          pattern: ^[a-zA-Z0-9._/-]+$
+                          pattern: ^[a-zA-Z0-9._/:-]+$
                           type: string
                         minItems: 1
                         type: array
@@ -4826,9 +4827,10 @@ spec:
                       interfaces:
                         description: |-
                           List of interface names or interface/address pairs to listen on.
-                          Interface names must contain only alphanumeric characters, hyphens, underscores, dots, or slashes.
+                          Interface names must contain only alphanumeric characters, hyphens, underscores, dots, slashes,
+                          or colons (for IPv6 interface/address pairs such as "eth0/2001:db8::1").
                         items:
-                          pattern: ^[a-zA-Z0-9._/-]+$
+                          pattern: ^[a-zA-Z0-9._/:-]+$
                           type: string
                         minItems: 1
                         type: array

@@ -88,3 +88,36 @@ var _ = Describe("KeaDhcp6Server Controller", func() {
 		})
 	})
 })
+
+var _ = Describe("KeaDhcp6Server interface validation", func() {
+	ctx := context.Background()
+
+	newServer := func(name string, interfaces []string) *keav1alpha1.KeaDhcp6Server {
+		return &keav1alpha1.KeaDhcp6Server{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespaceDefault},
+			Spec: keav1alpha1.KeaDhcp6ServerSpec{
+				InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: interfaces},
+			},
+		}
+	}
+
+	It("accepts IPv6 interface/address pairs and hyphenated interface names", func() {
+		resource := newServer("kd6-iface-ok", []string{
+			"br-ex",
+			"net1/2001:db8::1",
+			"ens1f0.500/fe80::1",
+			"net1-vlan/2001:db8:0:1::53",
+			"eth0/192.0.2.1",
+		})
+		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+	})
+
+	It("rejects interface names with shell metacharacters or whitespace", func() {
+		for _, bad := range []string{"net1;rm -rf /", "eth0 x", "eth0$(id)", "eth0,eth1"} {
+			err := k8sClient.Create(ctx, newServer("kd6-iface-bad", []string{bad}))
+			Expect(err).To(HaveOccurred(), "interface %q should be rejected", bad)
+			Expect(err.Error()).To(ContainSubstring("should match"), "interface %q", bad)
+		}
+	})
+})
