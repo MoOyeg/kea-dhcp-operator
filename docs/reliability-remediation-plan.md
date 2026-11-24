@@ -381,6 +381,8 @@ The release grouping ships each step's urgent, low-risk part first. Every PR kee
 | 3 | G | Probes and revised status aggregation | Step 7 test table |
 | 3 | H2 | Cluster lifecycle and DHCP service acceptance suites | End-to-end scenarios above |
 
+Status: Release 1 (A1, B1, C, F1, H1) is implemented on branch `reliability/release-1` and was validated on an OpenShift cluster with `v0.0.36-rc1` on November 24, 2026: a Percona-backed DHCPv4 HA pair with a Stork server showed no credential in init container logs; a MySQL dual-password rotation rolled the pods exactly once and the new pods wrote leases after the old password was revoked; a deleted credential Secret set `CredentialsUnavailable` without touching the pods; the mode-change guard blocked both directions while the old workload kept serving, and an API watch stream showed the old pods deleted before any new pod was added during the documented foreground-deletion migration and rollback; the existing simple-HA, Stork-metrics and custom-namespace SCC end-to-end tests passed.
+
 Release 1 leaves one known limitation from Step 2: the per-ordinal ConfigMaps are still updated in place, so a failed write can leave ordinal 0 on the new configuration and ordinal 1 on the old one until the retry succeeds. The workload template is not advanced in that case, and B2 removes the window entirely.
 
 Steps 4 and 5 can be developed in either order once failure propagation and mode guards exist, but HA durability must pass before the combined release. CI and tests should accompany each PR rather than arrive only in H2. Update [CRD documentation](crds.md), [architecture](architecture.md), [HA examples](ha.md), and [quickstart](quickstart.md) in the PR that changes their behavior.
