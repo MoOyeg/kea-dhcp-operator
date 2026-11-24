@@ -280,8 +280,10 @@ fi`, configHostname, stsName, configHostname, configDst, configHostname,
 		initScript += fmt.Sprintf(`; sed -i "s|\$%s|${%s}|g" %s`, ev.Name, ev.Name, configDst)
 	}
 
-	// Dump final config for debugging.
-	initScript += fmt.Sprintf("\necho '=== Final config ==='; cat %s", configDst)
+	// Never print the selected config: after the expansion above it holds the
+	// database credentials, and container logs are readable far more widely
+	// than the Secret they came from. Inspect the per-ordinal ConfigMaps,
+	// which only carry placeholders, to debug a configuration.
 
 	initImage := DefaultInitContainerImage
 	if p.InitContainerImage != "" {
