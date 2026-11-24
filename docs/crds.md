@@ -41,7 +41,10 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 - `loggers[]` — logging configuration
 - `high-availability` — HA configuration (see below)
 - `multi-threading` — thread pool and packet queue settings
-- DDNS parameters (`ddns-send-updates`, `ddns-qualifying-suffix`, etc.)
+- DHCP-DDNS connectivity (`dhcp-ddns`) and inheritable DDNS behavior
+  (`ddns-send-updates`, `ddns-override-client-update`, conflict resolution,
+  TTL, hostname sanitization, etc.) at global, shared-network, subnet, and
+  address-pool scope
 - PXE boot parameters (`next-server`, `boot-file-name`)
 
 **Deployment:**
@@ -182,6 +185,18 @@ The operator:
 ### Integration with DHCP Servers
 
 DHCP servers must be configured to send NCR messages to D2:
+- Set `dhcp-ddns.enable-updates: true`; configure the D2 address and port here
+  when it does not use the Kea defaults (`127.0.0.1:53001`)
+- A fixed `ddns-ttl` cannot be combined with `ddns-ttl-percent`, `ddns-ttl-min`
+  or `ddns-ttl-max` at the same scope, and `ddns-ttl-percent` must be a positive
+  number (`0` suppresses an inherited value); the operator rejects such specs
+  at render time (`ConfigValid=False`) instead of letting Kea crash-loop. The
+  deprecated boolean `ddns-use-conflict-resolution` is accepted at global scope
+  only
+- At shared-network, subnet and pool scope an explicit empty string for
+  `ddns-generated-prefix`, `ddns-qualifying-suffix`, `hostname-char-set` or
+  `hostname-char-replacement` overrides the inherited value (Kea: no prefix /
+  suffix, no sanitization, drop invalid characters)
 - Set `ddns-send-updates: true` on KeaDhcp4Server or KeaDhcp6Server
 - Set `ddns-qualifying-suffix` to the DNS domain
 - D2 listens on the configured address/port for NCR messages

@@ -157,8 +157,8 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 		IPAddress:        testLoopbackIP,
 		Port:             &port,
 		DNSServerTimeout: &dnsTimeout,
-		NCRProtocol:      "UDP",
-		NCRFormat:        "JSON",
+		NCRProtocol:      testNCRProtocolUDP,
+		NCRFormat:        testNCRFormatJSON,
 		TSIGKeys: []keav1alpha1.TSIGKey{
 			{
 				Name:       testTSIGKeyMD5,
@@ -196,10 +196,10 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 	if int32(ddns["dns-server-timeout"].(float64)) != 500 {
 		t.Errorf("expected dns-server-timeout 500, got %v", ddns["dns-server-timeout"])
 	}
-	if ddns["ncr-protocol"] != "UDP" {
+	if ddns["ncr-protocol"] != testNCRProtocolUDP {
 		t.Errorf("expected ncr-protocol 'UDP', got %v", ddns["ncr-protocol"])
 	}
-	if ddns["ncr-format"] != "JSON" {
+	if ddns["ncr-format"] != testNCRFormatJSON {
 		t.Errorf("expected ncr-format 'JSON', got %v", ddns["ncr-format"])
 	}
 

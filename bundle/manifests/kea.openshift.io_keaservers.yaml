@@ -1,9 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  creationTimestamp: null
   name: keaservers.kea.openshift.io
 spec:
   group: kea.openshift.io
@@ -1605,20 +1605,29 @@ spec:
                     required:
                     - socket-type
                     type: object
+                  ddns-conflict-resolution-mode:
+                    description: DHCID-based DDNS conflict resolution mode.
+                    enum:
+                    - check-with-dhcid
+                    - no-check-with-dhcid
+                    - check-exists-with-dhcid
+                    - no-check-without-dhcid
+                    type: string
                   ddns-generated-prefix:
-                    description: DDNS generated prefix.
+                    description: Prefix used for generated hostnames.
                     type: string
                   ddns-override-client-update:
-                    description: DDNS override client update.
+                    description: Override a client's request to perform its own DNS
+                      updates.
                     type: boolean
                   ddns-override-no-update:
-                    description: DDNS override no update.
+                    description: Ignore a client's request not to perform DDNS updates.
                     type: boolean
                   ddns-qualifying-suffix:
-                    description: DDNS qualifying suffix.
+                    description: DNS suffix appended to qualified client hostnames.
                     type: string
                   ddns-replace-client-name:
-                    description: DDNS replace client name mode.
+                    description: Client hostname replacement policy.
                     enum:
                     - never
                     - always
@@ -1626,11 +1635,72 @@ spec:
                     - when-not-present
                     type: string
                   ddns-send-updates:
-                    description: DDNS-related parameters.
+                    description: Send DDNS updates for this scope.
+                    type: boolean
+                  ddns-ttl:
+                    description: Fixed DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-max:
+                    description: Maximum DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-min:
+                    description: Minimum DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-percent:
+                    description: DNS record TTL as a percentage of the lease lifetime.
+                    x-kubernetes-preserve-unknown-fields: true
+                  ddns-update-on-renew:
+                    description: Send DDNS updates whenever a lease is renewed.
                     type: boolean
                   ddns-use-conflict-resolution:
-                    description: Enable DDNS conflict resolution.
+                    description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                     type: boolean
+                  dhcp-ddns:
+                    description: Connectivity to the Kea DHCP-DDNS server.
+                    properties:
+                      enable-updates:
+                        description: Enable connectivity to the Kea DHCP-DDNS server.
+                        type: boolean
+                      max-queue-size:
+                        description: Maximum number of NameChangeRequests queued for
+                          delivery.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      ncr-format:
+                        description: NameChangeRequest payload format.
+                        enum:
+                        - JSON
+                        type: string
+                      ncr-protocol:
+                        description: Protocol used to send NameChangeRequests.
+                        enum:
+                        - UDP
+                        type: string
+                      sender-ip:
+                        description: Source IP address used to send NameChangeRequests.
+                        type: string
+                      sender-port:
+                        description: Source port used to send NameChangeRequests.
+                          Zero selects a port automatically.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                      server-ip:
+                        description: IP address on which the Kea DHCP-DDNS server
+                          listens.
+                        type: string
+                      server-port:
+                        description: Port on which the Kea DHCP-DDNS server listens.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
                   high-availability:
                     description: |-
                       High Availability configuration. When set, the operator automatically
@@ -1799,6 +1869,13 @@ spec:
                     description: Enable host networking. Required for DHCP in some
                       network topologies.
                     type: boolean
+                  hostname-char-replacement:
+                    description: Replacement for disallowed hostname characters.
+                    type: string
+                  hostname-char-set:
+                    description: Regular expression defining characters permitted
+                      in generated hostnames.
+                    type: string
                   hosts-database:
                     description: Host reservations database (single source).
                     properties:
@@ -3359,6 +3436,71 @@ spec:
                         client-class:
                           description: Client class required for this network.
                           type: string
+                        ddns-conflict-resolution-mode:
+                          description: DHCID-based DDNS conflict resolution mode.
+                          enum:
+                          - check-with-dhcid
+                          - no-check-with-dhcid
+                          - check-exists-with-dhcid
+                          - no-check-without-dhcid
+                          type: string
+                        ddns-generated-prefix:
+                          description: Prefix used for generated hostnames. An empty
+                            string overrides an inherited prefix.
+                          type: string
+                        ddns-override-client-update:
+                          description: Override a client's request to perform its
+                            own DNS updates.
+                          type: boolean
+                        ddns-override-no-update:
+                          description: Ignore a client's request not to perform DDNS
+                            updates.
+                          type: boolean
+                        ddns-qualifying-suffix:
+                          description: DNS suffix appended to qualified client hostnames.
+                            An empty string overrides an inherited suffix.
+                          type: string
+                        ddns-replace-client-name:
+                          description: Client hostname replacement policy.
+                          enum:
+                          - never
+                          - always
+                          - when-present
+                          - when-not-present
+                          type: string
+                        ddns-send-updates:
+                          description: Send DDNS updates for this scope.
+                          type: boolean
+                        ddns-ttl:
+                          description: Fixed DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-max:
+                          description: Maximum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-min:
+                          description: Minimum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-percent:
+                          description: |-
+                            DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                            e.g. 0.25; 0 suppresses an inherited value).
+                          x-kubernetes-preserve-unknown-fields: true
+                        ddns-update-on-renew:
+                          description: Send DDNS updates whenever a lease is renewed.
+                          type: boolean
+                        hostname-char-replacement:
+                          description: |-
+                            Replacement for disallowed hostname characters. An empty string overrides
+                            an inherited replacement and drops the characters instead.
+                          type: string
+                        hostname-char-set:
+                          description: |-
+                            Regular expression defining characters permitted in generated hostnames.
+                            An empty string overrides an inherited set and disables sanitization.
+                          type: string
                         interface:
                           description: Shared network interface.
                           type: string
@@ -3440,6 +3582,74 @@ spec:
                               client-class:
                                 description: Client class required to use this subnet.
                                 type: string
+                              ddns-conflict-resolution-mode:
+                                description: DHCID-based DDNS conflict resolution
+                                  mode.
+                                enum:
+                                - check-with-dhcid
+                                - no-check-with-dhcid
+                                - check-exists-with-dhcid
+                                - no-check-without-dhcid
+                                type: string
+                              ddns-generated-prefix:
+                                description: Prefix used for generated hostnames.
+                                  An empty string overrides an inherited prefix.
+                                type: string
+                              ddns-override-client-update:
+                                description: Override a client's request to perform
+                                  its own DNS updates.
+                                type: boolean
+                              ddns-override-no-update:
+                                description: Ignore a client's request not to perform
+                                  DDNS updates.
+                                type: boolean
+                              ddns-qualifying-suffix:
+                                description: DNS suffix appended to qualified client
+                                  hostnames. An empty string overrides an inherited
+                                  suffix.
+                                type: string
+                              ddns-replace-client-name:
+                                description: Client hostname replacement policy.
+                                enum:
+                                - never
+                                - always
+                                - when-present
+                                - when-not-present
+                                type: string
+                              ddns-send-updates:
+                                description: Send DDNS updates for this scope.
+                                type: boolean
+                              ddns-ttl:
+                                description: Fixed DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-max:
+                                description: Maximum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-min:
+                                description: Minimum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-percent:
+                                description: |-
+                                  DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                  e.g. 0.25; 0 suppresses an inherited value).
+                                x-kubernetes-preserve-unknown-fields: true
+                              ddns-update-on-renew:
+                                description: Send DDNS updates whenever a lease is
+                                  renewed.
+                                type: boolean
+                              hostname-char-replacement:
+                                description: |-
+                                  Replacement for disallowed hostname characters. An empty string overrides
+                                  an inherited replacement and drops the characters instead.
+                                type: string
+                              hostname-char-set:
+                                description: |-
+                                  Regular expression defining characters permitted in generated hostnames.
+                                  An empty string overrides an inherited set and disables sanitization.
+                                type: string
                               id:
                                 description: Unique subnet identifier. Must be positive.
                                 format: int32
@@ -3504,6 +3714,74 @@ spec:
                                     client-class:
                                       description: Client class required to use this
                                         pool.
+                                      type: string
+                                    ddns-conflict-resolution-mode:
+                                      description: DHCID-based DDNS conflict resolution
+                                        mode.
+                                      enum:
+                                      - check-with-dhcid
+                                      - no-check-with-dhcid
+                                      - check-exists-with-dhcid
+                                      - no-check-without-dhcid
+                                      type: string
+                                    ddns-generated-prefix:
+                                      description: Prefix used for generated hostnames.
+                                        An empty string overrides an inherited prefix.
+                                      type: string
+                                    ddns-override-client-update:
+                                      description: Override a client's request to
+                                        perform its own DNS updates.
+                                      type: boolean
+                                    ddns-override-no-update:
+                                      description: Ignore a client's request not to
+                                        perform DDNS updates.
+                                      type: boolean
+                                    ddns-qualifying-suffix:
+                                      description: DNS suffix appended to qualified
+                                        client hostnames. An empty string overrides
+                                        an inherited suffix.
+                                      type: string
+                                    ddns-replace-client-name:
+                                      description: Client hostname replacement policy.
+                                      enum:
+                                      - never
+                                      - always
+                                      - when-present
+                                      - when-not-present
+                                      type: string
+                                    ddns-send-updates:
+                                      description: Send DDNS updates for this scope.
+                                      type: boolean
+                                    ddns-ttl:
+                                      description: Fixed DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-max:
+                                      description: Maximum DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-min:
+                                      description: Minimum DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-percent:
+                                      description: |-
+                                        DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                        e.g. 0.25; 0 suppresses an inherited value).
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    ddns-update-on-renew:
+                                      description: Send DDNS updates whenever a lease
+                                        is renewed.
+                                      type: boolean
+                                    hostname-char-replacement:
+                                      description: |-
+                                        Replacement for disallowed hostname characters. An empty string overrides
+                                        an inherited replacement and drops the characters instead.
+                                      type: string
+                                    hostname-char-set:
+                                      description: |-
+                                        Regular expression defining characters permitted in generated hostnames.
+                                        An empty string overrides an inherited set and disables sanitization.
                                       type: string
                                     option-data:
                                       description: Pool-level DHCP option data.
@@ -4018,6 +4296,71 @@ spec:
                         client-class:
                           description: Client class required to use this subnet.
                           type: string
+                        ddns-conflict-resolution-mode:
+                          description: DHCID-based DDNS conflict resolution mode.
+                          enum:
+                          - check-with-dhcid
+                          - no-check-with-dhcid
+                          - check-exists-with-dhcid
+                          - no-check-without-dhcid
+                          type: string
+                        ddns-generated-prefix:
+                          description: Prefix used for generated hostnames. An empty
+                            string overrides an inherited prefix.
+                          type: string
+                        ddns-override-client-update:
+                          description: Override a client's request to perform its
+                            own DNS updates.
+                          type: boolean
+                        ddns-override-no-update:
+                          description: Ignore a client's request not to perform DDNS
+                            updates.
+                          type: boolean
+                        ddns-qualifying-suffix:
+                          description: DNS suffix appended to qualified client hostnames.
+                            An empty string overrides an inherited suffix.
+                          type: string
+                        ddns-replace-client-name:
+                          description: Client hostname replacement policy.
+                          enum:
+                          - never
+                          - always
+                          - when-present
+                          - when-not-present
+                          type: string
+                        ddns-send-updates:
+                          description: Send DDNS updates for this scope.
+                          type: boolean
+                        ddns-ttl:
+                          description: Fixed DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-max:
+                          description: Maximum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-min:
+                          description: Minimum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-percent:
+                          description: |-
+                            DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                            e.g. 0.25; 0 suppresses an inherited value).
+                          x-kubernetes-preserve-unknown-fields: true
+                        ddns-update-on-renew:
+                          description: Send DDNS updates whenever a lease is renewed.
+                          type: boolean
+                        hostname-char-replacement:
+                          description: |-
+                            Replacement for disallowed hostname characters. An empty string overrides
+                            an inherited replacement and drops the characters instead.
+                          type: string
+                        hostname-char-set:
+                          description: |-
+                            Regular expression defining characters permitted in generated hostnames.
+                            An empty string overrides an inherited set and disables sanitization.
+                          type: string
                         id:
                           description: Unique subnet identifier. Must be positive.
                           format: int32
@@ -4078,6 +4421,74 @@ spec:
                             properties:
                               client-class:
                                 description: Client class required to use this pool.
+                                type: string
+                              ddns-conflict-resolution-mode:
+                                description: DHCID-based DDNS conflict resolution
+                                  mode.
+                                enum:
+                                - check-with-dhcid
+                                - no-check-with-dhcid
+                                - check-exists-with-dhcid
+                                - no-check-without-dhcid
+                                type: string
+                              ddns-generated-prefix:
+                                description: Prefix used for generated hostnames.
+                                  An empty string overrides an inherited prefix.
+                                type: string
+                              ddns-override-client-update:
+                                description: Override a client's request to perform
+                                  its own DNS updates.
+                                type: boolean
+                              ddns-override-no-update:
+                                description: Ignore a client's request not to perform
+                                  DDNS updates.
+                                type: boolean
+                              ddns-qualifying-suffix:
+                                description: DNS suffix appended to qualified client
+                                  hostnames. An empty string overrides an inherited
+                                  suffix.
+                                type: string
+                              ddns-replace-client-name:
+                                description: Client hostname replacement policy.
+                                enum:
+                                - never
+                                - always
+                                - when-present
+                                - when-not-present
+                                type: string
+                              ddns-send-updates:
+                                description: Send DDNS updates for this scope.
+                                type: boolean
+                              ddns-ttl:
+                                description: Fixed DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-max:
+                                description: Maximum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-min:
+                                description: Minimum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-percent:
+                                description: |-
+                                  DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                  e.g. 0.25; 0 suppresses an inherited value).
+                                x-kubernetes-preserve-unknown-fields: true
+                              ddns-update-on-renew:
+                                description: Send DDNS updates whenever a lease is
+                                  renewed.
+                                type: boolean
+                              hostname-char-replacement:
+                                description: |-
+                                  Replacement for disallowed hostname characters. An empty string overrides
+                                  an inherited replacement and drops the characters instead.
+                                type: string
+                              hostname-char-set:
+                                description: |-
+                                  Regular expression defining characters permitted in generated hostnames.
+                                  An empty string overrides an inherited set and disables sanitization.
                                 type: string
                               option-data:
                                 description: Pool-level DHCP option data.
@@ -4461,12 +4872,102 @@ spec:
                     required:
                     - socket-type
                     type: object
+                  ddns-conflict-resolution-mode:
+                    description: DHCID-based DDNS conflict resolution mode.
+                    enum:
+                    - check-with-dhcid
+                    - no-check-with-dhcid
+                    - check-exists-with-dhcid
+                    - no-check-without-dhcid
+                    type: string
+                  ddns-generated-prefix:
+                    description: Prefix used for generated hostnames.
+                    type: string
+                  ddns-override-client-update:
+                    description: Override a client's request to perform its own DNS
+                      updates.
+                    type: boolean
+                  ddns-override-no-update:
+                    description: Ignore a client's request not to perform DDNS updates.
+                    type: boolean
                   ddns-qualifying-suffix:
-                    description: DDNS qualifying suffix.
+                    description: DNS suffix appended to qualified client hostnames.
+                    type: string
+                  ddns-replace-client-name:
+                    description: Client hostname replacement policy.
+                    enum:
+                    - never
+                    - always
+                    - when-present
+                    - when-not-present
                     type: string
                   ddns-send-updates:
-                    description: DDNS send updates.
+                    description: Send DDNS updates for this scope.
                     type: boolean
+                  ddns-ttl:
+                    description: Fixed DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-max:
+                    description: Maximum DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-min:
+                    description: Minimum DNS record TTL in seconds.
+                    format: int32
+                    type: integer
+                  ddns-ttl-percent:
+                    description: DNS record TTL as a percentage of the lease lifetime.
+                    x-kubernetes-preserve-unknown-fields: true
+                  ddns-update-on-renew:
+                    description: Send DDNS updates whenever a lease is renewed.
+                    type: boolean
+                  ddns-use-conflict-resolution:
+                    description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
+                    type: boolean
+                  dhcp-ddns:
+                    description: Connectivity to the Kea DHCP-DDNS server.
+                    properties:
+                      enable-updates:
+                        description: Enable connectivity to the Kea DHCP-DDNS server.
+                        type: boolean
+                      max-queue-size:
+                        description: Maximum number of NameChangeRequests queued for
+                          delivery.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      ncr-format:
+                        description: NameChangeRequest payload format.
+                        enum:
+                        - JSON
+                        type: string
+                      ncr-protocol:
+                        description: Protocol used to send NameChangeRequests.
+                        enum:
+                        - UDP
+                        type: string
+                      sender-ip:
+                        description: Source IP address used to send NameChangeRequests.
+                        type: string
+                      sender-port:
+                        description: Source port used to send NameChangeRequests.
+                          Zero selects a port automatically.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                      server-ip:
+                        description: IP address on which the Kea DHCP-DDNS server
+                          listens.
+                        type: string
+                      server-port:
+                        description: Port on which the Kea DHCP-DDNS server listens.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
                   high-availability:
                     description: High Availability configuration.
                     properties:
@@ -4632,6 +5133,13 @@ spec:
                   hostNetwork:
                     description: Enable host networking.
                     type: boolean
+                  hostname-char-replacement:
+                    description: Replacement for disallowed hostname characters.
+                    type: string
+                  hostname-char-set:
+                    description: Regular expression defining characters permitted
+                      in generated hostnames.
+                    type: string
                   hosts-database:
                     description: Host reservations database (single source).
                     properties:
@@ -6187,12 +6695,85 @@ spec:
                         client-class:
                           description: Client class required for this network.
                           type: string
+                        ddns-conflict-resolution-mode:
+                          description: DHCID-based DDNS conflict resolution mode.
+                          enum:
+                          - check-with-dhcid
+                          - no-check-with-dhcid
+                          - check-exists-with-dhcid
+                          - no-check-without-dhcid
+                          type: string
+                        ddns-generated-prefix:
+                          description: Prefix used for generated hostnames. An empty
+                            string overrides an inherited prefix.
+                          type: string
+                        ddns-override-client-update:
+                          description: Override a client's request to perform its
+                            own DNS updates.
+                          type: boolean
+                        ddns-override-no-update:
+                          description: Ignore a client's request not to perform DDNS
+                            updates.
+                          type: boolean
+                        ddns-qualifying-suffix:
+                          description: DNS suffix appended to qualified client hostnames.
+                            An empty string overrides an inherited suffix.
+                          type: string
+                        ddns-replace-client-name:
+                          description: Client hostname replacement policy.
+                          enum:
+                          - never
+                          - always
+                          - when-present
+                          - when-not-present
+                          type: string
+                        ddns-send-updates:
+                          description: Send DDNS updates for this scope.
+                          type: boolean
+                        ddns-ttl:
+                          description: Fixed DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-max:
+                          description: Maximum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-min:
+                          description: Minimum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-percent:
+                          description: |-
+                            DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                            e.g. 0.25; 0 suppresses an inherited value).
+                          x-kubernetes-preserve-unknown-fields: true
+                        ddns-update-on-renew:
+                          description: Send DDNS updates whenever a lease is renewed.
+                          type: boolean
+                        hostname-char-replacement:
+                          description: |-
+                            Replacement for disallowed hostname characters. An empty string overrides
+                            an inherited replacement and drops the characters instead.
+                          type: string
+                        hostname-char-set:
+                          description: |-
+                            Regular expression defining characters permitted in generated hostnames.
+                            An empty string overrides an inherited set and disables sanitization.
+                          type: string
                         interface:
                           description: Network interface.
                           type: string
                         interface-id:
                           description: Interface ID.
                           type: string
+                        max-valid-lifetime:
+                          description: Maximum valid lifetime.
+                          format: int32
+                          type: integer
+                        min-valid-lifetime:
+                          description: Minimum valid lifetime.
+                          format: int32
+                          type: integer
                         name:
                           description: Shared network name.
                           type: string
@@ -6250,6 +6831,11 @@ spec:
                           description: Renew timer in seconds.
                           format: int32
                           type: integer
+                        require-client-classes:
+                          description: Client classes to evaluate.
+                          items:
+                            type: string
+                          type: array
                         subnet6:
                           description: Subnets belonging to this shared network.
                           items:
@@ -6257,6 +6843,74 @@ spec:
                             properties:
                               client-class:
                                 description: Client class required for this subnet.
+                                type: string
+                              ddns-conflict-resolution-mode:
+                                description: DHCID-based DDNS conflict resolution
+                                  mode.
+                                enum:
+                                - check-with-dhcid
+                                - no-check-with-dhcid
+                                - check-exists-with-dhcid
+                                - no-check-without-dhcid
+                                type: string
+                              ddns-generated-prefix:
+                                description: Prefix used for generated hostnames.
+                                  An empty string overrides an inherited prefix.
+                                type: string
+                              ddns-override-client-update:
+                                description: Override a client's request to perform
+                                  its own DNS updates.
+                                type: boolean
+                              ddns-override-no-update:
+                                description: Ignore a client's request not to perform
+                                  DDNS updates.
+                                type: boolean
+                              ddns-qualifying-suffix:
+                                description: DNS suffix appended to qualified client
+                                  hostnames. An empty string overrides an inherited
+                                  suffix.
+                                type: string
+                              ddns-replace-client-name:
+                                description: Client hostname replacement policy.
+                                enum:
+                                - never
+                                - always
+                                - when-present
+                                - when-not-present
+                                type: string
+                              ddns-send-updates:
+                                description: Send DDNS updates for this scope.
+                                type: boolean
+                              ddns-ttl:
+                                description: Fixed DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-max:
+                                description: Maximum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-min:
+                                description: Minimum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-percent:
+                                description: |-
+                                  DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                  e.g. 0.25; 0 suppresses an inherited value).
+                                x-kubernetes-preserve-unknown-fields: true
+                              ddns-update-on-renew:
+                                description: Send DDNS updates whenever a lease is
+                                  renewed.
+                                type: boolean
+                              hostname-char-replacement:
+                                description: |-
+                                  Replacement for disallowed hostname characters. An empty string overrides
+                                  an inherited replacement and drops the characters instead.
+                                type: string
+                              hostname-char-set:
+                                description: |-
+                                  Regular expression defining characters permitted in generated hostnames.
+                                  An empty string overrides an inherited set and disables sanitization.
                                 type: string
                               id:
                                 description: Unique subnet identifier.
@@ -6379,6 +7033,12 @@ spec:
                                       maximum: 128
                                       minimum: 1
                                       type: integer
+                                    require-client-classes:
+                                      description: Client classes that must be evaluated
+                                        for this pool.
+                                      items:
+                                        type: string
+                                      type: array
                                   required:
                                   - delegated-len
                                   - prefix
@@ -6394,6 +7054,74 @@ spec:
                                     client-class:
                                       description: Client class required to use this
                                         pool.
+                                      type: string
+                                    ddns-conflict-resolution-mode:
+                                      description: DHCID-based DDNS conflict resolution
+                                        mode.
+                                      enum:
+                                      - check-with-dhcid
+                                      - no-check-with-dhcid
+                                      - check-exists-with-dhcid
+                                      - no-check-without-dhcid
+                                      type: string
+                                    ddns-generated-prefix:
+                                      description: Prefix used for generated hostnames.
+                                        An empty string overrides an inherited prefix.
+                                      type: string
+                                    ddns-override-client-update:
+                                      description: Override a client's request to
+                                        perform its own DNS updates.
+                                      type: boolean
+                                    ddns-override-no-update:
+                                      description: Ignore a client's request not to
+                                        perform DDNS updates.
+                                      type: boolean
+                                    ddns-qualifying-suffix:
+                                      description: DNS suffix appended to qualified
+                                        client hostnames. An empty string overrides
+                                        an inherited suffix.
+                                      type: string
+                                    ddns-replace-client-name:
+                                      description: Client hostname replacement policy.
+                                      enum:
+                                      - never
+                                      - always
+                                      - when-present
+                                      - when-not-present
+                                      type: string
+                                    ddns-send-updates:
+                                      description: Send DDNS updates for this scope.
+                                      type: boolean
+                                    ddns-ttl:
+                                      description: Fixed DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-max:
+                                      description: Maximum DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-min:
+                                      description: Minimum DNS record TTL in seconds.
+                                      format: int32
+                                      type: integer
+                                    ddns-ttl-percent:
+                                      description: |-
+                                        DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                        e.g. 0.25; 0 suppresses an inherited value).
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    ddns-update-on-renew:
+                                      description: Send DDNS updates whenever a lease
+                                        is renewed.
+                                      type: boolean
+                                    hostname-char-replacement:
+                                      description: |-
+                                        Replacement for disallowed hostname characters. An empty string overrides
+                                        an inherited replacement and drops the characters instead.
+                                      type: string
+                                    hostname-char-set:
+                                      description: |-
+                                        Regular expression defining characters permitted in generated hostnames.
+                                        An empty string overrides an inherited set and disables sanitization.
                                       type: string
                                     option-data:
                                       description: Pool-level DHCP option data.
@@ -6900,6 +7628,71 @@ spec:
                         client-class:
                           description: Client class required for this subnet.
                           type: string
+                        ddns-conflict-resolution-mode:
+                          description: DHCID-based DDNS conflict resolution mode.
+                          enum:
+                          - check-with-dhcid
+                          - no-check-with-dhcid
+                          - check-exists-with-dhcid
+                          - no-check-without-dhcid
+                          type: string
+                        ddns-generated-prefix:
+                          description: Prefix used for generated hostnames. An empty
+                            string overrides an inherited prefix.
+                          type: string
+                        ddns-override-client-update:
+                          description: Override a client's request to perform its
+                            own DNS updates.
+                          type: boolean
+                        ddns-override-no-update:
+                          description: Ignore a client's request not to perform DDNS
+                            updates.
+                          type: boolean
+                        ddns-qualifying-suffix:
+                          description: DNS suffix appended to qualified client hostnames.
+                            An empty string overrides an inherited suffix.
+                          type: string
+                        ddns-replace-client-name:
+                          description: Client hostname replacement policy.
+                          enum:
+                          - never
+                          - always
+                          - when-present
+                          - when-not-present
+                          type: string
+                        ddns-send-updates:
+                          description: Send DDNS updates for this scope.
+                          type: boolean
+                        ddns-ttl:
+                          description: Fixed DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-max:
+                          description: Maximum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-min:
+                          description: Minimum DNS record TTL in seconds.
+                          format: int32
+                          type: integer
+                        ddns-ttl-percent:
+                          description: |-
+                            DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                            e.g. 0.25; 0 suppresses an inherited value).
+                          x-kubernetes-preserve-unknown-fields: true
+                        ddns-update-on-renew:
+                          description: Send DDNS updates whenever a lease is renewed.
+                          type: boolean
+                        hostname-char-replacement:
+                          description: |-
+                            Replacement for disallowed hostname characters. An empty string overrides
+                            an inherited replacement and drops the characters instead.
+                          type: string
+                        hostname-char-set:
+                          description: |-
+                            Regular expression defining characters permitted in generated hostnames.
+                            An empty string overrides an inherited set and disables sanitization.
+                          type: string
                         id:
                           description: Unique subnet identifier.
                           format: int32
@@ -7011,6 +7804,12 @@ spec:
                                 maximum: 128
                                 minimum: 1
                                 type: integer
+                              require-client-classes:
+                                description: Client classes that must be evaluated
+                                  for this pool.
+                                items:
+                                  type: string
+                                type: array
                             required:
                             - delegated-len
                             - prefix
@@ -7025,6 +7824,74 @@ spec:
                             properties:
                               client-class:
                                 description: Client class required to use this pool.
+                                type: string
+                              ddns-conflict-resolution-mode:
+                                description: DHCID-based DDNS conflict resolution
+                                  mode.
+                                enum:
+                                - check-with-dhcid
+                                - no-check-with-dhcid
+                                - check-exists-with-dhcid
+                                - no-check-without-dhcid
+                                type: string
+                              ddns-generated-prefix:
+                                description: Prefix used for generated hostnames.
+                                  An empty string overrides an inherited prefix.
+                                type: string
+                              ddns-override-client-update:
+                                description: Override a client's request to perform
+                                  its own DNS updates.
+                                type: boolean
+                              ddns-override-no-update:
+                                description: Ignore a client's request not to perform
+                                  DDNS updates.
+                                type: boolean
+                              ddns-qualifying-suffix:
+                                description: DNS suffix appended to qualified client
+                                  hostnames. An empty string overrides an inherited
+                                  suffix.
+                                type: string
+                              ddns-replace-client-name:
+                                description: Client hostname replacement policy.
+                                enum:
+                                - never
+                                - always
+                                - when-present
+                                - when-not-present
+                                type: string
+                              ddns-send-updates:
+                                description: Send DDNS updates for this scope.
+                                type: boolean
+                              ddns-ttl:
+                                description: Fixed DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-max:
+                                description: Maximum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-min:
+                                description: Minimum DNS record TTL in seconds.
+                                format: int32
+                                type: integer
+                              ddns-ttl-percent:
+                                description: |-
+                                  DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                  e.g. 0.25; 0 suppresses an inherited value).
+                                x-kubernetes-preserve-unknown-fields: true
+                              ddns-update-on-renew:
+                                description: Send DDNS updates whenever a lease is
+                                  renewed.
+                                type: boolean
+                              hostname-char-replacement:
+                                description: |-
+                                  Replacement for disallowed hostname characters. An empty string overrides
+                                  an inherited replacement and drops the characters instead.
+                                type: string
+                              hostname-char-set:
+                                description: |-
+                                  Regular expression defining characters permitted in generated hostnames.
+                                  An empty string overrides an inherited set and disables sanitization.
                                 type: string
                               option-data:
                                 description: Pool-level DHCP option data.
@@ -9764,9 +10631,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: null
-  storedVersions: null

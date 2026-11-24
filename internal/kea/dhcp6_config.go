@@ -18,6 +18,7 @@ package kea
 
 import (
 	"encoding/json"
+	"fmt"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
@@ -51,6 +52,9 @@ func (r *Dhcp6ConfigRenderer) RenderJSONWithServerName(serverName string) ([]byt
 }
 
 func (r *Dhcp6ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]byte, error) {
+	if err := r.validateDDNS(); err != nil {
+		return nil, fmt.Errorf("invalid DDNS configuration: %w", err)
+	}
 	s := r.Spec
 	dhcp6 := map[string]interface{}{}
 
@@ -167,8 +171,12 @@ func (r *Dhcp6ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]b
 	setIfNotNil(dhcp6, "rapid-commit", s.RapidCommit)
 
 	// DDNS parameters
-	setIfNotNil(dhcp6, "ddns-send-updates", s.DDNSSendUpdates)
-	setIfNotEmpty(dhcp6, "ddns-qualifying-suffix", s.DDNSQualifyingSuffix)
+	if ddns := renderDhcpDdnsConfig(s.DhcpDdns); ddns != nil {
+		dhcp6["dhcp-ddns"] = ddns
+	}
+	renderDDNSBehavior(dhcp6, globalDDNSBehavior6(s))
+	// Deprecated upstream and only valid at global scope (Kea rejects it in pools).
+	setIfNotNil(dhcp6, "ddns-use-conflict-resolution", s.DDNSUseConflictResolution)
 
 	// Multi-threading
 	if s.MultiThreading != nil {
@@ -247,6 +255,7 @@ func (r *Dhcp6ConfigRenderer) renderSubnet6(sub keav1alpha1.Subnet6) map[string]
 	setIfNotNil(sm, "rebind-timer", sub.RebindTimer)
 	setIfNotNil(sm, "rapid-commit", sub.RapidCommit)
 	setIfNotEmpty(sm, "reservation-mode", sub.ReservationMode)
+	renderDDNSBehavior(sm, sub.DDNSBehavior)
 	return sm
 }
 
@@ -262,6 +271,7 @@ func (r *Dhcp6ConfigRenderer) renderPool6(p keav1alpha1.Pool6) map[string]interf
 	if len(p.RequireClientClasses) > 0 {
 		pm["require-client-classes"] = p.RequireClientClasses
 	}
+	renderDDNSBehavior(pm, p.DDNSBehavior)
 	return pm
 }
 
@@ -278,6 +288,9 @@ func (r *Dhcp6ConfigRenderer) renderPDPool(pd keav1alpha1.PDPool) map[string]int
 		pm["option-data"] = opts
 	}
 	setIfNotEmpty(pm, "client-class", pd.ClientClass)
+	if len(pd.RequireClientClasses) > 0 {
+		pm["require-client-classes"] = pd.RequireClientClasses
+	}
 	return pm
 }
 
@@ -309,12 +322,73 @@ func (r *Dhcp6ConfigRenderer) renderSharedNetworks6() []map[string]interface{} {
 			}
 		}
 		setIfNotEmpty(snm, "client-class", sn.ClientClass)
+		if len(sn.RequireClientClasses) > 0 {
+			snm["require-client-classes"] = sn.RequireClientClasses
+		}
 		setIfNotNil(snm, "preferred-lifetime", sn.PreferredLifetime)
 		setIfNotNil(snm, "valid-lifetime", sn.ValidLifetime)
+		setIfNotNil(snm, "min-valid-lifetime", sn.MinValidLifetime)
+		setIfNotNil(snm, "max-valid-lifetime", sn.MaxValidLifetime)
 		setIfNotNil(snm, "renew-timer", sn.RenewTimer)
 		setIfNotNil(snm, "rebind-timer", sn.RebindTimer)
 		setIfNotNil(snm, "rapid-commit", sn.RapidCommit)
+		renderDDNSBehavior(snm, sn.DDNSBehavior)
 		result = append(result, snm)
 	}
 	return result
+}
+
+// globalDDNSBehavior6 collects the global-scope DDNS parameters of the spec.
+func globalDDNSBehavior6(s *keav1alpha1.KeaDhcp6ServerSpec) keav1alpha1.DDNSBehavior {
+	return keav1alpha1.DDNSBehavior{
+		DDNSSendUpdates:            s.DDNSSendUpdates,
+		DDNSOverrideNoUpdate:       s.DDNSOverrideNoUpdate,
+		DDNSOverrideClientUpdate:   s.DDNSOverrideClientUpdate,
+		DDNSReplaceClientName:      s.DDNSReplaceClientName,
+		DDNSGeneratedPrefix:        stringPtrIfSet(s.DDNSGeneratedPrefix),
+		DDNSQualifyingSuffix:       stringPtrIfSet(s.DDNSQualifyingSuffix),
+		DDNSUpdateOnRenew:          s.DDNSUpdateOnRenew,
+		DDNSConflictResolutionMode: s.DDNSConflictResolutionMode,
+		DDNSTTL:                    s.DDNSTTL,
+		DDNSTTLPercent:             s.DDNSTTLPercent,
+		DDNSTTLMin:                 s.DDNSTTLMin,
+		DDNSTTLMax:                 s.DDNSTTLMax,
+		HostnameCharSet:            stringPtrIfSet(s.HostnameCharSet),
+		HostnameCharReplacement:    stringPtrIfSet(s.HostnameCharReplacement),
+	}
+}
+
+// validateDDNS checks the DDNS parameters at every scope of the spec.
+func (r *Dhcp6ConfigRenderer) validateDDNS() error {
+	s := r.Spec
+	if err := validateDDNSBehavior("global", globalDDNSBehavior6(s)); err != nil {
+		return err
+	}
+	validateSubnets := func(prefix string, subnets []keav1alpha1.Subnet6) error {
+		for i, sub := range subnets {
+			scope := fmt.Sprintf("%ssubnet6[%d]", prefix, i)
+			if err := validateDDNSBehavior(scope, sub.DDNSBehavior); err != nil {
+				return err
+			}
+			for j, p := range sub.Pools {
+				if err := validateDDNSBehavior(fmt.Sprintf("%s.pools[%d]", scope, j), p.DDNSBehavior); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := validateSubnets("", s.Subnet6); err != nil {
+		return err
+	}
+	for i, sn := range s.SharedNetworks {
+		scope := fmt.Sprintf("shared-networks[%d]", i)
+		if err := validateDDNSBehavior(scope, sn.DDNSBehavior); err != nil {
+			return err
+		}
+		if err := validateSubnets(scope+".", sn.Subnet6); err != nil {
+			return err
+		}
+	}
+	return nil
 }

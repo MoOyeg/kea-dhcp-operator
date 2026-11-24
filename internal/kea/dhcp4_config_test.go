@@ -23,6 +23,16 @@ import (
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
+var _ = keav1alpha1.KeaDhcp4ServerSpec{
+	DDNSSendUpdates:           nil,
+	DDNSOverrideNoUpdate:      nil,
+	DDNSOverrideClientUpdate:  nil,
+	DDNSReplaceClientName:     "",
+	DDNSGeneratedPrefix:       "",
+	DDNSQualifyingSuffix:      "",
+	DDNSUseConflictResolution: nil,
+}
+
 func TestDhcp4MinimalConfig(t *testing.T) {
 	spec := &keav1alpha1.KeaDhcp4ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{
@@ -149,6 +159,47 @@ func TestDhcp4FullConfig(t *testing.T) {
 	// Check authoritative
 	if dhcp4["authoritative"] != true {
 		t.Errorf("expected authoritative true, got %v", dhcp4["authoritative"])
+	}
+}
+
+func TestDhcp4WithDhcpDdnsConnectivity(t *testing.T) {
+	enabled := true
+	port := int32(53002)
+	senderPort := int32(0)
+	queueSize := int32(2048)
+	spec := &keav1alpha1.KeaDhcp4ServerSpec{
+		InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: []string{testInterfaceEth0}},
+		DhcpDdns: &keav1alpha1.DhcpDdnsConfig{
+			EnableUpdates: &enabled,
+			ServerIP:      "192.0.2.10",
+			ServerPort:    &port,
+			SenderPort:    &senderPort,
+			MaxQueueSize:  &queueSize,
+			NCRProtocol:   testNCRProtocolUDP,
+			NCRFormat:     testNCRFormatJSON,
+		},
+	}
+
+	data, err := NewDhcp4ConfigRenderer(spec).RenderJSON()
+	if err != nil {
+		t.Fatalf("RenderJSON failed: %v", err)
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	ddns := root["Dhcp4"].(map[string]interface{})["dhcp-ddns"].(map[string]interface{})
+	if ddns["enable-updates"] != true || ddns["server-ip"] != "192.0.2.10" {
+		t.Errorf("unexpected dhcp-ddns connectivity: %v", ddns)
+	}
+	if int32(ddns["server-port"].(float64)) != port ||
+		int32(ddns["sender-port"].(float64)) != senderPort ||
+		int32(ddns["max-queue-size"].(float64)) != queueSize {
+		t.Errorf("unexpected dhcp-ddns ports or queue size: %v", ddns)
+	}
+	if ddns["ncr-protocol"] != testNCRProtocolUDP || ddns["ncr-format"] != testNCRFormatJSON {
+		t.Errorf("unexpected dhcp-ddns encoding: %v", ddns)
 	}
 }
 

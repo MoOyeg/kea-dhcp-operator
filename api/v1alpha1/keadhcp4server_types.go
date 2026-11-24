@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,6 +25,8 @@ import (
 
 // Pool4 defines an IPv4 address pool for dynamic allocation.
 type Pool4 struct {
+	DDNSBehavior `json:",inline"`
+
 	// Address range (e.g., "192.0.2.1 - 192.0.2.200" or "192.0.2.0/26").
 	// +kubebuilder:validation:Required
 	Pool string `json:"pool"`
@@ -43,6 +46,8 @@ type Pool4 struct {
 
 // Subnet4 defines a DHCPv4 subnet configuration.
 type Subnet4 struct {
+	DDNSBehavior `json:",inline"`
+
 	// Unique subnet identifier. Must be positive.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
@@ -133,6 +138,8 @@ type Subnet4 struct {
 
 // SharedNetwork4 defines a shared network grouping multiple IPv4 subnets.
 type SharedNetwork4 struct {
+	DDNSBehavior `json:",inline"`
+
 	// Shared network name.
 	// +kubebuilder:validation:Required
 	Name string `json:"name"`
@@ -327,32 +334,71 @@ type KeaDhcp4ServerSpec struct {
 	// +optional
 	ServerHostname string `json:"server-hostname,omitempty"`
 
-	// DDNS-related parameters.
+	// Connectivity to the Kea DHCP-DDNS server.
+	// +optional
+	DhcpDdns *DhcpDdnsConfig `json:"dhcp-ddns,omitempty"`
+
+	// Send DDNS updates for this scope.
 	// +optional
 	DDNSSendUpdates *bool `json:"ddns-send-updates,omitempty"`
 
-	// DDNS override no update.
+	// Ignore a client's request not to perform DDNS updates.
 	// +optional
 	DDNSOverrideNoUpdate *bool `json:"ddns-override-no-update,omitempty"`
 
-	// DDNS override client update.
+	// Override a client's request to perform its own DNS updates.
 	// +optional
 	DDNSOverrideClientUpdate *bool `json:"ddns-override-client-update,omitempty"`
 
-	// DDNS replace client name mode.
+	// Client hostname replacement policy.
 	// +optional
 	// +kubebuilder:validation:Enum=never;always;when-present;when-not-present
 	DDNSReplaceClientName string `json:"ddns-replace-client-name,omitempty"`
 
-	// DDNS generated prefix.
+	// Prefix used for generated hostnames.
 	// +optional
 	DDNSGeneratedPrefix string `json:"ddns-generated-prefix,omitempty"`
 
-	// DDNS qualifying suffix.
+	// DNS suffix appended to qualified client hostnames.
 	// +optional
 	DDNSQualifyingSuffix string `json:"ddns-qualifying-suffix,omitempty"`
 
-	// Enable DDNS conflict resolution.
+	// Send DDNS updates whenever a lease is renewed.
+	// +optional
+	DDNSUpdateOnRenew *bool `json:"ddns-update-on-renew,omitempty"`
+
+	// DHCID-based DDNS conflict resolution mode.
+	// +optional
+	// +kubebuilder:validation:Enum=check-with-dhcid;no-check-with-dhcid;check-exists-with-dhcid;no-check-without-dhcid
+	DDNSConflictResolutionMode string `json:"ddns-conflict-resolution-mode,omitempty"`
+
+	// Fixed DNS record TTL in seconds.
+	// +optional
+	DDNSTTL *int32 `json:"ddns-ttl,omitempty"`
+
+	// DNS record TTL as a percentage of the lease lifetime.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	DDNSTTLPercent *apiextensionsv1.JSON `json:"ddns-ttl-percent,omitempty"`
+
+	// Minimum DNS record TTL in seconds.
+	// +optional
+	DDNSTTLMin *int32 `json:"ddns-ttl-min,omitempty"`
+
+	// Maximum DNS record TTL in seconds.
+	// +optional
+	DDNSTTLMax *int32 `json:"ddns-ttl-max,omitempty"`
+
+	// Regular expression defining characters permitted in generated hostnames.
+	// +optional
+	HostnameCharSet string `json:"hostname-char-set,omitempty"`
+
+	// Replacement for disallowed hostname characters.
+	// +optional
+	HostnameCharReplacement string `json:"hostname-char-replacement,omitempty"`
+
+	// Legacy boolean equivalent of ddns-conflict-resolution-mode.
 	// +optional
 	DDNSUseConflictResolution *bool `json:"ddns-use-conflict-resolution,omitempty"`
 
