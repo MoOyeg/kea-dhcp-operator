@@ -19,6 +19,11 @@ package kea
 // Shared string literals used across the kea package tests. Declared here so
 // individual test files can reference them without repeating literals (goconst).
 const (
+	testSubnet4CIDR      = "192.0.2.0/24"
+	testSubnet6Prefix    = "2001:db8:1::/64"
+	testPool6Range       = "2001:db8:1::100 - 2001:db8:1::1ff"
+	testNCRProtocolUDP   = "UDP"
+	testNCRFormatJSON    = "JSON"
 	testNameDhcp4        = "kea-dhcp4"
 	testLeaseDBName      = "kea_leases"
 	testSeverityInfo     = "INFO"

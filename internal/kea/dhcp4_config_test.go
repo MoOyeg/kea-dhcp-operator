@@ -175,8 +175,8 @@ func TestDhcp4WithDhcpDdnsConnectivity(t *testing.T) {
 			ServerPort:    &port,
 			SenderPort:    &senderPort,
 			MaxQueueSize:  &queueSize,
-			NCRProtocol:   "UDP",
-			NCRFormat:     "JSON",
+			NCRProtocol:   testNCRProtocolUDP,
+			NCRFormat:     testNCRFormatJSON,
 		},
 	}
 
@@ -198,7 +198,7 @@ func TestDhcp4WithDhcpDdnsConnectivity(t *testing.T) {
 		int32(ddns["max-queue-size"].(float64)) != queueSize {
 		t.Errorf("unexpected dhcp-ddns ports or queue size: %v", ddns)
 	}
-	if ddns["ncr-protocol"] != "UDP" || ddns["ncr-format"] != "JSON" {
+	if ddns["ncr-protocol"] != testNCRProtocolUDP || ddns["ncr-format"] != testNCRFormatJSON {
 		t.Errorf("unexpected dhcp-ddns encoding: %v", ddns)
 	}
 }

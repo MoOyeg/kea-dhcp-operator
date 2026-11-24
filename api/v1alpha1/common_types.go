@@ -190,7 +190,8 @@ type DhcpDdnsConfig struct {
 }
 
 // DDNSBehavior defines inheritable DDNS behavior at global, shared-network,
-// subnet, and address-pool scope.
+// subnet, and address-pool scope. A fixed ddns-ttl cannot be combined with
+// ddns-ttl-percent, ddns-ttl-min or ddns-ttl-max at the same scope.
 type DDNSBehavior struct {
 	// Send DDNS updates for this scope.
 	// +optional
@@ -251,10 +252,6 @@ type DDNSBehavior struct {
 	// Replacement for disallowed hostname characters.
 	// +optional
 	HostnameCharReplacement string `json:"hostname-char-replacement,omitempty"`
-
-	// Legacy boolean equivalent of ddns-conflict-resolution-mode.
-	// +optional
-	DDNSUseConflictResolution *bool `json:"ddns-use-conflict-resolution,omitempty"`
 }
 
 // ========== DHCP Options ==========

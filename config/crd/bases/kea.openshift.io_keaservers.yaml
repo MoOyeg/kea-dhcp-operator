@@ -3488,9 +3488,6 @@ spec:
                         ddns-update-on-renew:
                           description: Send DDNS updates whenever a lease is renewed.
                           type: boolean
-                        ddns-use-conflict-resolution:
-                          description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
-                          type: boolean
                         hostname-char-replacement:
                           description: Replacement for disallowed hostname characters.
                           type: string
@@ -3634,9 +3631,6 @@ spec:
                                 description: Send DDNS updates whenever a lease is
                                   renewed.
                                 type: boolean
-                              ddns-use-conflict-resolution:
-                                description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
-                                type: boolean
                               hostname-char-replacement:
                                 description: Replacement for disallowed hostname characters.
                                 type: string
@@ -3763,9 +3757,6 @@ spec:
                                     ddns-update-on-renew:
                                       description: Send DDNS updates whenever a lease
                                         is renewed.
-                                      type: boolean
-                                    ddns-use-conflict-resolution:
-                                      description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                                       type: boolean
                                     hostname-char-replacement:
                                       description: Replacement for disallowed hostname
@@ -4340,9 +4331,6 @@ spec:
                         ddns-update-on-renew:
                           description: Send DDNS updates whenever a lease is renewed.
                           type: boolean
-                        ddns-use-conflict-resolution:
-                          description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
-                          type: boolean
                         hostname-char-replacement:
                           description: Replacement for disallowed hostname characters.
                           type: string
@@ -4465,9 +4453,6 @@ spec:
                               ddns-update-on-renew:
                                 description: Send DDNS updates whenever a lease is
                                   renewed.
-                                type: boolean
-                              ddns-use-conflict-resolution:
-                                description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                                 type: boolean
                               hostname-char-replacement:
                                 description: Replacement for disallowed hostname characters.
@@ -6733,9 +6718,6 @@ spec:
                         ddns-update-on-renew:
                           description: Send DDNS updates whenever a lease is renewed.
                           type: boolean
-                        ddns-use-conflict-resolution:
-                          description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
-                          type: boolean
                         hostname-char-replacement:
                           description: Replacement for disallowed hostname characters.
                           type: string
@@ -6881,9 +6863,6 @@ spec:
                               ddns-update-on-renew:
                                 description: Send DDNS updates whenever a lease is
                                   renewed.
-                                type: boolean
-                              ddns-use-conflict-resolution:
-                                description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                                 type: boolean
                               hostname-char-replacement:
                                 description: Replacement for disallowed hostname characters.
@@ -7089,9 +7068,6 @@ spec:
                                     ddns-update-on-renew:
                                       description: Send DDNS updates whenever a lease
                                         is renewed.
-                                      type: boolean
-                                    ddns-use-conflict-resolution:
-                                      description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                                       type: boolean
                                     hostname-char-replacement:
                                       description: Replacement for disallowed hostname
@@ -7658,9 +7634,6 @@ spec:
                         ddns-update-on-renew:
                           description: Send DDNS updates whenever a lease is renewed.
                           type: boolean
-                        ddns-use-conflict-resolution:
-                          description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
-                          type: boolean
                         hostname-char-replacement:
                           description: Replacement for disallowed hostname characters.
                           type: string
@@ -7854,9 +7827,6 @@ spec:
                               ddns-update-on-renew:
                                 description: Send DDNS updates whenever a lease is
                                   renewed.
-                                type: boolean
-                              ddns-use-conflict-resolution:
-                                description: Legacy boolean equivalent of ddns-conflict-resolution-mode.
                                 type: boolean
                               hostname-char-replacement:
                                 description: Replacement for disallowed hostname characters.

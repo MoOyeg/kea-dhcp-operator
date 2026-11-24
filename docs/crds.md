@@ -187,6 +187,11 @@ The operator:
 DHCP servers must be configured to send NCR messages to D2:
 - Set `dhcp-ddns.enable-updates: true`; configure the D2 address and port here
   when it does not use the Kea defaults (`127.0.0.1:53001`)
+- A fixed `ddns-ttl` cannot be combined with `ddns-ttl-percent`, `ddns-ttl-min`
+  or `ddns-ttl-max` at the same scope, and `ddns-ttl-percent` must be a positive
+  number; the operator rejects such specs at render time (`ConfigValid=False`)
+  instead of letting Kea crash-loop. The deprecated boolean
+  `ddns-use-conflict-resolution` is accepted at global scope only
 - Set `ddns-send-updates: true` on KeaDhcp4Server or KeaDhcp6Server
 - Set `ddns-qualifying-suffix` to the DNS domain
 - D2 listens on the configured address/port for NCR messages

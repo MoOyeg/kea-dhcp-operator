@@ -179,9 +179,9 @@ func TestDhcp6FullConfig(t *testing.T) {
 		Subnet6: []keav1alpha1.Subnet6{
 			{
 				ID:     1,
-				Subnet: "2001:db8:1::/64",
+				Subnet: testSubnet6Prefix,
 				Pools: []keav1alpha1.Pool6{
-					{Pool: "2001:db8:1::100 - 2001:db8:1::1ff"},
+					{Pool: testPool6Range},
 				},
 			},
 		},
@@ -239,7 +239,6 @@ func TestDhcp6WithDDNSConfiguration(t *testing.T) {
 	sendUpdates := true
 	overrideClientUpdate := true
 	updateOnRenew := true
-	ttl := int32(900)
 	ttlPercent := apiextensionsv1.JSON{Raw: []byte("0.5")}
 	spec := &keav1alpha1.KeaDhcp6ServerSpec{
 		InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: []string{testInterfaceEth0}},
@@ -254,16 +253,15 @@ func TestDhcp6WithDDNSConfiguration(t *testing.T) {
 		DDNSQualifyingSuffix:       "example.test",
 		DDNSUpdateOnRenew:          &updateOnRenew,
 		DDNSConflictResolutionMode: "check-with-dhcid",
-		DDNSTTL:                    &ttl,
 		DDNSTTLPercent:             &ttlPercent,
 		HostnameCharSet:            "[^a-zA-Z0-9]",
 		HostnameCharReplacement:    "-",
 		Subnet6: []keav1alpha1.Subnet6{{
 			ID:           1,
-			Subnet:       "2001:db8:1::/64",
+			Subnet:       testSubnet6Prefix,
 			DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSSendUpdates: &sendUpdates},
 			Pools: []keav1alpha1.Pool6{{
-				Pool:         "2001:db8:1::100 - 2001:db8:1::1ff",
+				Pool:         testPool6Range,
 				DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSOverrideClientUpdate: &overrideClientUpdate},
 			}},
 		}},
@@ -286,8 +284,8 @@ func TestDhcp6WithDDNSConfiguration(t *testing.T) {
 	for _, key := range []string{
 		"dhcp-ddns", "ddns-send-updates", "ddns-override-client-update",
 		"ddns-replace-client-name", "ddns-generated-prefix", "ddns-qualifying-suffix",
-		"ddns-update-on-renew", "ddns-conflict-resolution-mode", "ddns-ttl",
-		"ddns-ttl-percent", "hostname-char-set", "hostname-char-replacement",
+		"ddns-update-on-renew", "ddns-conflict-resolution-mode",
+		keyDDNSTTLPercent, "hostname-char-set", "hostname-char-replacement",
 	} {
 		if _, ok := dhcp6[key]; !ok {
 			t.Errorf("expected global DDNS key %q", key)
@@ -298,8 +296,8 @@ func TestDhcp6WithDDNSConfiguration(t *testing.T) {
 	if ddns["enable-updates"] != true || ddns["server-ip"] != "2001:db8::53" {
 		t.Errorf("unexpected dhcp-ddns connectivity: %v", ddns)
 	}
-	if dhcp6["ddns-ttl-percent"] != 0.5 {
-		t.Errorf("expected numeric ddns-ttl-percent, got %v", dhcp6["ddns-ttl-percent"])
+	if dhcp6[keyDDNSTTLPercent] != 0.5 {
+		t.Errorf("expected numeric ddns-ttl-percent, got %v", dhcp6[keyDDNSTTLPercent])
 	}
 	subnet := dhcp6["subnet6"].([]interface{})[0].(map[string]interface{})
 	if subnet["ddns-send-updates"] != true {

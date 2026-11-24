@@ -23,6 +23,8 @@ import (
 	"reflect"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // Common Kea JSON field keys and literal values shared across renderers.
@@ -96,12 +98,51 @@ func renderDDNSBehavior(target map[string]interface{}, behavior keav1alpha1.DDNS
 	setIfNotNil(target, "ddns-update-on-renew", behavior.DDNSUpdateOnRenew)
 	setIfNotEmpty(target, "ddns-conflict-resolution-mode", behavior.DDNSConflictResolutionMode)
 	setIfNotNil(target, "ddns-ttl", behavior.DDNSTTL)
-	setIfNotNil(target, "ddns-ttl-percent", behavior.DDNSTTLPercent)
+	if ddnsTTLPercentSet(behavior.DDNSTTLPercent) {
+		target[keyDDNSTTLPercent] = *behavior.DDNSTTLPercent
+	}
 	setIfNotNil(target, "ddns-ttl-min", behavior.DDNSTTLMin)
 	setIfNotNil(target, "ddns-ttl-max", behavior.DDNSTTLMax)
 	setIfNotEmpty(target, "hostname-char-set", behavior.HostnameCharSet)
 	setIfNotEmpty(target, "hostname-char-replacement", behavior.HostnameCharReplacement)
-	setIfNotNil(target, "ddns-use-conflict-resolution", behavior.DDNSUseConflictResolution)
+}
+
+// keyDDNSTTLPercent is the Kea parameter name for the lease-lifetime TTL percentage.
+const keyDDNSTTLPercent = "ddns-ttl-percent"
+
+// ddnsTTLPercentSet reports whether a schemaless ddns-ttl-percent carries a value.
+func ddnsTTLPercentSet(v *apiextensionsv1.JSON) bool {
+	return v != nil && len(v.Raw) > 0
+}
+
+// validateDDNSBehavior enforces the constraints Kea applies to the DDNS
+// parameters of one scope, so a bad spec fails the CR's ConfigValid condition
+// instead of crash-looping the server. Kea rejects a fixed ddns-ttl combined
+// with ddns-ttl-percent, ddns-ttl-min or ddns-ttl-max ("cannot specify both
+// ddns-ttl-percent and ddns-ttl"), and ddns-ttl-percent must be a positive
+// number; the CRD field is schemaless so the API server cannot check that.
+func validateDDNSBehavior(scope string, b keav1alpha1.DDNSBehavior) error {
+	if b.DDNSTTL != nil {
+		for _, c := range []struct {
+			name string
+			set  bool
+		}{
+			{keyDDNSTTLPercent, ddnsTTLPercentSet(b.DDNSTTLPercent)},
+			{"ddns-ttl-min", b.DDNSTTLMin != nil},
+			{"ddns-ttl-max", b.DDNSTTLMax != nil},
+		} {
+			if c.set {
+				return fmt.Errorf("%s: cannot specify both %s and ddns-ttl", scope, c.name)
+			}
+		}
+	}
+	if ddnsTTLPercentSet(b.DDNSTTLPercent) {
+		var pct float64
+		if err := json.Unmarshal(b.DDNSTTLPercent.Raw, &pct); err != nil || pct <= 0 {
+			return fmt.Errorf("%s: %s must be a positive number, got %s", scope, keyDDNSTTLPercent, string(b.DDNSTTLPercent.Raw))
+		}
+	}
+	return nil
 }
 
 // renderOptionData converts a slice of OptionData to JSON-ready maps.
