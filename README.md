@@ -98,6 +98,7 @@ For detailed guides and reference material, see the [docs/](docs/) folder:
 | [Quick Start](docs/quickstart.md) | Extended quick start with HA, NAD, MySQL, and Stork examples |
 | [HA Guide](docs/ha.md) | Step-by-step High Availability deployment walkthrough |
 | [Stork Integration](docs/stork.md) | Prometheus metrics and Stork server monitoring |
+| [Reliability Remediation Plan](docs/reliability-remediation-plan.md) | Implementation steps, acceptance criteria, and tests for operational reliability fixes |
 
 ## Development
 
