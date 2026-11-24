@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-
-	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	"strconv"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
 // Common Kea JSON field keys and literal values shared across renderers.
@@ -93,18 +95,28 @@ func renderDDNSBehavior(target map[string]interface{}, behavior keav1alpha1.DDNS
 	setIfNotNil(target, "ddns-override-no-update", behavior.DDNSOverrideNoUpdate)
 	setIfNotNil(target, "ddns-override-client-update", behavior.DDNSOverrideClientUpdate)
 	setIfNotEmpty(target, "ddns-replace-client-name", behavior.DDNSReplaceClientName)
-	setIfNotEmpty(target, "ddns-generated-prefix", behavior.DDNSGeneratedPrefix)
-	setIfNotEmpty(target, "ddns-qualifying-suffix", behavior.DDNSQualifyingSuffix)
+	setIfNotNil(target, "ddns-generated-prefix", behavior.DDNSGeneratedPrefix)
+	setIfNotNil(target, "ddns-qualifying-suffix", behavior.DDNSQualifyingSuffix)
 	setIfNotNil(target, "ddns-update-on-renew", behavior.DDNSUpdateOnRenew)
 	setIfNotEmpty(target, "ddns-conflict-resolution-mode", behavior.DDNSConflictResolutionMode)
 	setIfNotNil(target, "ddns-ttl", behavior.DDNSTTL)
-	if ddnsTTLPercentSet(behavior.DDNSTTLPercent) {
-		target[keyDDNSTTLPercent] = *behavior.DDNSTTLPercent
+	if pct, ok, err := ddnsTTLPercentValue(behavior.DDNSTTLPercent); ok && err == nil {
+		target[keyDDNSTTLPercent] = pct
 	}
 	setIfNotNil(target, "ddns-ttl-min", behavior.DDNSTTLMin)
 	setIfNotNil(target, "ddns-ttl-max", behavior.DDNSTTLMax)
-	setIfNotEmpty(target, "hostname-char-set", behavior.HostnameCharSet)
-	setIfNotEmpty(target, "hostname-char-replacement", behavior.HostnameCharReplacement)
+	setIfNotNil(target, "hostname-char-set", behavior.HostnameCharSet)
+	setIfNotNil(target, "hostname-char-replacement", behavior.HostnameCharReplacement)
+}
+
+// stringPtrIfSet turns a plain (global-scope) string field into the pointer
+// form used by DDNSBehavior; the global scope has nothing to override, so an
+// empty string there means "unset".
+func stringPtrIfSet(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // keyDDNSTTLPercent is the Kea parameter name for the lease-lifetime TTL percentage.
@@ -115,12 +127,34 @@ func ddnsTTLPercentSet(v *apiextensionsv1.JSON) bool {
 	return v != nil && len(v.Raw) > 0
 }
 
+// ddnsTTLPercentValue parses a schemaless ddns-ttl-percent and returns it as
+// a JSON number that always carries a decimal point. Kea's parser only
+// accepts a floating-point literal here: "0" is a syntax error while "0.0" is
+// fine, and Go's encoder would print a whole-number float without the point.
+// A negative value is accepted by Kea's parser but meaningless, so it is
+// rejected; 0 is allowed because Kea uses it to suppress an inherited value.
+func ddnsTTLPercentValue(v *apiextensionsv1.JSON) (json.Number, bool, error) {
+	if !ddnsTTLPercentSet(v) {
+		return "", false, nil
+	}
+	var pct float64
+	if err := json.Unmarshal(v.Raw, &pct); err != nil || pct < 0 {
+		return "", true, fmt.Errorf("%s must be a non-negative number, got %s", keyDDNSTTLPercent, string(v.Raw))
+	}
+	text := strconv.FormatFloat(pct, 'f', -1, 64)
+	if !strings.ContainsAny(text, ".e") {
+		text += ".0"
+	}
+	return json.Number(text), true, nil
+}
+
 // validateDDNSBehavior enforces the constraints Kea applies to the DDNS
 // parameters of one scope, so a bad spec fails the CR's ConfigValid condition
 // instead of crash-looping the server. Kea rejects a fixed ddns-ttl combined
 // with ddns-ttl-percent, ddns-ttl-min or ddns-ttl-max ("cannot specify both
-// ddns-ttl-percent and ddns-ttl"), and ddns-ttl-percent must be a positive
-// number; the CRD field is schemaless so the API server cannot check that.
+// ddns-ttl-percent and ddns-ttl"), and ddns-ttl-percent must be a non-negative
+// floating-point number; the CRD field is schemaless so the API server cannot
+// check that.
 func validateDDNSBehavior(scope string, b keav1alpha1.DDNSBehavior) error {
 	if b.DDNSTTL != nil {
 		for _, c := range []struct {
@@ -136,11 +170,8 @@ func validateDDNSBehavior(scope string, b keav1alpha1.DDNSBehavior) error {
 			}
 		}
 	}
-	if ddnsTTLPercentSet(b.DDNSTTLPercent) {
-		var pct float64
-		if err := json.Unmarshal(b.DDNSTTLPercent.Raw, &pct); err != nil || pct <= 0 {
-			return fmt.Errorf("%s: %s must be a positive number, got %s", scope, keyDDNSTTLPercent, string(b.DDNSTTLPercent.Raw))
-		}
+	if _, _, err := ddnsTTLPercentValue(b.DDNSTTLPercent); err != nil {
+		return fmt.Errorf("%s: %w", scope, err)
 	}
 	return nil
 }

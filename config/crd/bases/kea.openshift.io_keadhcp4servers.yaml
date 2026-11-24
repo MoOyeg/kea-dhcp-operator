@@ -2069,7 +2069,8 @@ spec:
                       - no-check-without-dhcid
                       type: string
                     ddns-generated-prefix:
-                      description: Prefix used for generated hostnames.
+                      description: Prefix used for generated hostnames. An empty string
+                        overrides an inherited prefix.
                       type: string
                     ddns-override-client-update:
                       description: Override a client's request to perform its own
@@ -2080,6 +2081,7 @@ spec:
                       type: boolean
                     ddns-qualifying-suffix:
                       description: DNS suffix appended to qualified client hostnames.
+                        An empty string overrides an inherited suffix.
                       type: string
                     ddns-replace-client-name:
                       description: Client hostname replacement policy.
@@ -2105,17 +2107,22 @@ spec:
                       format: int32
                       type: integer
                     ddns-ttl-percent:
-                      description: DNS record TTL as a percentage of the lease lifetime.
+                      description: |-
+                        DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                        e.g. 0.25; 0 suppresses an inherited value).
                       x-kubernetes-preserve-unknown-fields: true
                     ddns-update-on-renew:
                       description: Send DDNS updates whenever a lease is renewed.
                       type: boolean
                     hostname-char-replacement:
-                      description: Replacement for disallowed hostname characters.
+                      description: |-
+                        Replacement for disallowed hostname characters. An empty string overrides
+                        an inherited replacement and drops the characters instead.
                       type: string
                     hostname-char-set:
-                      description: Regular expression defining characters permitted
-                        in generated hostnames.
+                      description: |-
+                        Regular expression defining characters permitted in generated hostnames.
+                        An empty string overrides an inherited set and disables sanitization.
                       type: string
                     interface:
                       description: Shared network interface.
@@ -2207,7 +2214,8 @@ spec:
                             - no-check-without-dhcid
                             type: string
                           ddns-generated-prefix:
-                            description: Prefix used for generated hostnames.
+                            description: Prefix used for generated hostnames. An empty
+                              string overrides an inherited prefix.
                             type: string
                           ddns-override-client-update:
                             description: Override a client's request to perform its
@@ -2219,6 +2227,7 @@ spec:
                             type: boolean
                           ddns-qualifying-suffix:
                             description: DNS suffix appended to qualified client hostnames.
+                              An empty string overrides an inherited suffix.
                             type: string
                           ddns-replace-client-name:
                             description: Client hostname replacement policy.
@@ -2244,18 +2253,22 @@ spec:
                             format: int32
                             type: integer
                           ddns-ttl-percent:
-                            description: DNS record TTL as a percentage of the lease
-                              lifetime.
+                            description: |-
+                              DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                              e.g. 0.25; 0 suppresses an inherited value).
                             x-kubernetes-preserve-unknown-fields: true
                           ddns-update-on-renew:
                             description: Send DDNS updates whenever a lease is renewed.
                             type: boolean
                           hostname-char-replacement:
-                            description: Replacement for disallowed hostname characters.
+                            description: |-
+                              Replacement for disallowed hostname characters. An empty string overrides
+                              an inherited replacement and drops the characters instead.
                             type: string
                           hostname-char-set:
-                            description: Regular expression defining characters permitted
-                              in generated hostnames.
+                            description: |-
+                              Regular expression defining characters permitted in generated hostnames.
+                              An empty string overrides an inherited set and disables sanitization.
                             type: string
                           id:
                             description: Unique subnet identifier. Must be positive.
@@ -2331,6 +2344,7 @@ spec:
                                   type: string
                                 ddns-generated-prefix:
                                   description: Prefix used for generated hostnames.
+                                    An empty string overrides an inherited prefix.
                                   type: string
                                 ddns-override-client-update:
                                   description: Override a client's request to perform
@@ -2342,7 +2356,8 @@ spec:
                                   type: boolean
                                 ddns-qualifying-suffix:
                                   description: DNS suffix appended to qualified client
-                                    hostnames.
+                                    hostnames. An empty string overrides an inherited
+                                    suffix.
                                   type: string
                                 ddns-replace-client-name:
                                   description: Client hostname replacement policy.
@@ -2368,20 +2383,23 @@ spec:
                                   format: int32
                                   type: integer
                                 ddns-ttl-percent:
-                                  description: DNS record TTL as a percentage of the
-                                    lease lifetime.
+                                  description: |-
+                                    DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                                    e.g. 0.25; 0 suppresses an inherited value).
                                   x-kubernetes-preserve-unknown-fields: true
                                 ddns-update-on-renew:
                                   description: Send DDNS updates whenever a lease
                                     is renewed.
                                   type: boolean
                                 hostname-char-replacement:
-                                  description: Replacement for disallowed hostname
-                                    characters.
+                                  description: |-
+                                    Replacement for disallowed hostname characters. An empty string overrides
+                                    an inherited replacement and drops the characters instead.
                                   type: string
                                 hostname-char-set:
-                                  description: Regular expression defining characters
-                                    permitted in generated hostnames.
+                                  description: |-
+                                    Regular expression defining characters permitted in generated hostnames.
+                                    An empty string overrides an inherited set and disables sanitization.
                                   type: string
                                 option-data:
                                   description: Pool-level DHCP option data.
@@ -2897,7 +2915,8 @@ spec:
                       - no-check-without-dhcid
                       type: string
                     ddns-generated-prefix:
-                      description: Prefix used for generated hostnames.
+                      description: Prefix used for generated hostnames. An empty string
+                        overrides an inherited prefix.
                       type: string
                     ddns-override-client-update:
                       description: Override a client's request to perform its own
@@ -2908,6 +2927,7 @@ spec:
                       type: boolean
                     ddns-qualifying-suffix:
                       description: DNS suffix appended to qualified client hostnames.
+                        An empty string overrides an inherited suffix.
                       type: string
                     ddns-replace-client-name:
                       description: Client hostname replacement policy.
@@ -2933,17 +2953,22 @@ spec:
                       format: int32
                       type: integer
                     ddns-ttl-percent:
-                      description: DNS record TTL as a percentage of the lease lifetime.
+                      description: |-
+                        DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                        e.g. 0.25; 0 suppresses an inherited value).
                       x-kubernetes-preserve-unknown-fields: true
                     ddns-update-on-renew:
                       description: Send DDNS updates whenever a lease is renewed.
                       type: boolean
                     hostname-char-replacement:
-                      description: Replacement for disallowed hostname characters.
+                      description: |-
+                        Replacement for disallowed hostname characters. An empty string overrides
+                        an inherited replacement and drops the characters instead.
                       type: string
                     hostname-char-set:
-                      description: Regular expression defining characters permitted
-                        in generated hostnames.
+                      description: |-
+                        Regular expression defining characters permitted in generated hostnames.
+                        An empty string overrides an inherited set and disables sanitization.
                       type: string
                     id:
                       description: Unique subnet identifier. Must be positive.
@@ -3015,7 +3040,8 @@ spec:
                             - no-check-without-dhcid
                             type: string
                           ddns-generated-prefix:
-                            description: Prefix used for generated hostnames.
+                            description: Prefix used for generated hostnames. An empty
+                              string overrides an inherited prefix.
                             type: string
                           ddns-override-client-update:
                             description: Override a client's request to perform its
@@ -3027,6 +3053,7 @@ spec:
                             type: boolean
                           ddns-qualifying-suffix:
                             description: DNS suffix appended to qualified client hostnames.
+                              An empty string overrides an inherited suffix.
                             type: string
                           ddns-replace-client-name:
                             description: Client hostname replacement policy.
@@ -3052,18 +3079,22 @@ spec:
                             format: int32
                             type: integer
                           ddns-ttl-percent:
-                            description: DNS record TTL as a percentage of the lease
-                              lifetime.
+                            description: |-
+                              DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+                              e.g. 0.25; 0 suppresses an inherited value).
                             x-kubernetes-preserve-unknown-fields: true
                           ddns-update-on-renew:
                             description: Send DDNS updates whenever a lease is renewed.
                             type: boolean
                           hostname-char-replacement:
-                            description: Replacement for disallowed hostname characters.
+                            description: |-
+                              Replacement for disallowed hostname characters. An empty string overrides
+                              an inherited replacement and drops the characters instead.
                             type: string
                           hostname-char-set:
-                            description: Regular expression defining characters permitted
-                              in generated hostnames.
+                            description: |-
+                              Regular expression defining characters permitted in generated hostnames.
+                              An empty string overrides an inherited set and disables sanitization.
                             type: string
                           option-data:
                             description: Pool-level DHCP option data.

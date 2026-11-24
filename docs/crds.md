@@ -189,9 +189,14 @@ DHCP servers must be configured to send NCR messages to D2:
   when it does not use the Kea defaults (`127.0.0.1:53001`)
 - A fixed `ddns-ttl` cannot be combined with `ddns-ttl-percent`, `ddns-ttl-min`
   or `ddns-ttl-max` at the same scope, and `ddns-ttl-percent` must be a positive
-  number; the operator rejects such specs at render time (`ConfigValid=False`)
-  instead of letting Kea crash-loop. The deprecated boolean
-  `ddns-use-conflict-resolution` is accepted at global scope only
+  number (`0` suppresses an inherited value); the operator rejects such specs
+  at render time (`ConfigValid=False`) instead of letting Kea crash-loop. The
+  deprecated boolean `ddns-use-conflict-resolution` is accepted at global scope
+  only
+- At shared-network, subnet and pool scope an explicit empty string for
+  `ddns-generated-prefix`, `ddns-qualifying-suffix`, `hostname-char-set` or
+  `hostname-char-replacement` overrides the inherited value (Kea: no prefix /
+  suffix, no sanitization, drop invalid characters)
 - Set `ddns-send-updates: true` on KeaDhcp4Server or KeaDhcp6Server
 - Set `ddns-qualifying-suffix` to the DNS domain
 - D2 listens on the configured address/port for NCR messages

@@ -333,16 +333,16 @@ func globalDDNSBehavior4(s *keav1alpha1.KeaDhcp4ServerSpec) keav1alpha1.DDNSBeha
 		DDNSOverrideNoUpdate:       s.DDNSOverrideNoUpdate,
 		DDNSOverrideClientUpdate:   s.DDNSOverrideClientUpdate,
 		DDNSReplaceClientName:      s.DDNSReplaceClientName,
-		DDNSGeneratedPrefix:        s.DDNSGeneratedPrefix,
-		DDNSQualifyingSuffix:       s.DDNSQualifyingSuffix,
+		DDNSGeneratedPrefix:        stringPtrIfSet(s.DDNSGeneratedPrefix),
+		DDNSQualifyingSuffix:       stringPtrIfSet(s.DDNSQualifyingSuffix),
 		DDNSUpdateOnRenew:          s.DDNSUpdateOnRenew,
 		DDNSConflictResolutionMode: s.DDNSConflictResolutionMode,
 		DDNSTTL:                    s.DDNSTTL,
 		DDNSTTLPercent:             s.DDNSTTLPercent,
 		DDNSTTLMin:                 s.DDNSTTLMin,
 		DDNSTTLMax:                 s.DDNSTTLMax,
-		HostnameCharSet:            s.HostnameCharSet,
-		HostnameCharReplacement:    s.HostnameCharReplacement,
+		HostnameCharSet:            stringPtrIfSet(s.HostnameCharSet),
+		HostnameCharReplacement:    stringPtrIfSet(s.HostnameCharReplacement),
 	}
 }
 

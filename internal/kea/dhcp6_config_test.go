@@ -267,7 +267,7 @@ func TestDhcp6WithDDNSConfiguration(t *testing.T) {
 		}},
 		SharedNetworks: []keav1alpha1.SharedNetwork6{{
 			Name:         testSharedNetwork,
-			DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSQualifyingSuffix: "shared.example.test"},
+			DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSQualifyingSuffix: stringPtr("shared.example.test")},
 		}},
 	}
 

@@ -192,6 +192,11 @@ type DhcpDdnsConfig struct {
 // DDNSBehavior defines inheritable DDNS behavior at global, shared-network,
 // subnet, and address-pool scope. A fixed ddns-ttl cannot be combined with
 // ddns-ttl-percent, ddns-ttl-min or ddns-ttl-max at the same scope.
+//
+// The string parameters are pointers so that an explicit empty string at a
+// narrower scope overrides an inherited value (Kea treats an empty
+// hostname-char-set as "no sanitization", an empty hostname-char-replacement
+// as "drop invalid characters", and an empty suffix or prefix as "none").
 type DDNSBehavior struct {
 	// Send DDNS updates for this scope.
 	// +optional
@@ -210,13 +215,13 @@ type DDNSBehavior struct {
 	// +kubebuilder:validation:Enum=never;always;when-present;when-not-present
 	DDNSReplaceClientName string `json:"ddns-replace-client-name,omitempty"`
 
-	// Prefix used for generated hostnames.
+	// Prefix used for generated hostnames. An empty string overrides an inherited prefix.
 	// +optional
-	DDNSGeneratedPrefix string `json:"ddns-generated-prefix,omitempty"`
+	DDNSGeneratedPrefix *string `json:"ddns-generated-prefix,omitempty"`
 
-	// DNS suffix appended to qualified client hostnames.
+	// DNS suffix appended to qualified client hostnames. An empty string overrides an inherited suffix.
 	// +optional
-	DDNSQualifyingSuffix string `json:"ddns-qualifying-suffix,omitempty"`
+	DDNSQualifyingSuffix *string `json:"ddns-qualifying-suffix,omitempty"`
 
 	// Send DDNS updates whenever a lease is renewed.
 	// +optional
@@ -231,7 +236,8 @@ type DDNSBehavior struct {
 	// +optional
 	DDNSTTL *int32 `json:"ddns-ttl,omitempty"`
 
-	// DNS record TTL as a percentage of the lease lifetime.
+	// DNS record TTL as a fraction of the lease lifetime (a non-negative number,
+	// e.g. 0.25; 0 suppresses an inherited value).
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Schemaless
@@ -246,12 +252,14 @@ type DDNSBehavior struct {
 	DDNSTTLMax *int32 `json:"ddns-ttl-max,omitempty"`
 
 	// Regular expression defining characters permitted in generated hostnames.
+	// An empty string overrides an inherited set and disables sanitization.
 	// +optional
-	HostnameCharSet string `json:"hostname-char-set,omitempty"`
+	HostnameCharSet *string `json:"hostname-char-set,omitempty"`
 
-	// Replacement for disallowed hostname characters.
+	// Replacement for disallowed hostname characters. An empty string overrides
+	// an inherited replacement and drops the characters instead.
 	// +optional
-	HostnameCharReplacement string `json:"hostname-char-replacement,omitempty"`
+	HostnameCharReplacement *string `json:"hostname-char-replacement,omitempty"`
 }
 
 // ========== DHCP Options ==========

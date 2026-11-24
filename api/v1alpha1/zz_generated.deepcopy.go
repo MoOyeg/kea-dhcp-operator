@@ -239,6 +239,16 @@ func (in *DDNSBehavior) DeepCopyInto(out *DDNSBehavior) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.DDNSGeneratedPrefix != nil {
+		in, out := &in.DDNSGeneratedPrefix, &out.DDNSGeneratedPrefix
+		*out = new(string)
+		**out = **in
+	}
+	if in.DDNSQualifyingSuffix != nil {
+		in, out := &in.DDNSQualifyingSuffix, &out.DDNSQualifyingSuffix
+		*out = new(string)
+		**out = **in
+	}
 	if in.DDNSUpdateOnRenew != nil {
 		in, out := &in.DDNSUpdateOnRenew, &out.DDNSUpdateOnRenew
 		*out = new(bool)
@@ -262,6 +272,16 @@ func (in *DDNSBehavior) DeepCopyInto(out *DDNSBehavior) {
 	if in.DDNSTTLMax != nil {
 		in, out := &in.DDNSTTLMax, &out.DDNSTTLMax
 		*out = new(int32)
+		**out = **in
+	}
+	if in.HostnameCharSet != nil {
+		in, out := &in.HostnameCharSet, &out.HostnameCharSet
+		*out = new(string)
+		**out = **in
+	}
+	if in.HostnameCharReplacement != nil {
+		in, out := &in.HostnameCharReplacement, &out.HostnameCharReplacement
+		*out = new(string)
 		**out = **in
 	}
 }
