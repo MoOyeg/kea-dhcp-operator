@@ -33,9 +33,11 @@ import (
 )
 
 const (
-	revOld  = "rev-old"
-	revNew  = "rev-new"
-	hashCfg = "cfg-1"
+	revOld            = "rev-old"
+	revNew            = "rev-new"
+	hashCfg           = "cfg-1"
+	hashCfg2          = "cfg-2"
+	subtestStandalone = "standalone"
 )
 
 func workloadWith(template, meta map[string]string) *appsv1.Deployment {
@@ -62,14 +64,14 @@ func TestDecideCredentialRollout(t *testing.T) {
 		{"new workload", nil, hashCfg, false, "", credentialRollout{stamp: revNew, applied: revNew}},
 		{"already current", workloadWith(stamped(revNew), nil), hashCfg, false, "", credentialRollout{stamp: revNew, applied: revNew}},
 		{"upgrade adopts without a restart", workloadWith(legacy, nil), hashCfg, false, "", credentialRollout{applied: revNew}},
-		{"upgrade with a config change rolls anyway", workloadWith(legacy, nil), "cfg-2", false, "", credentialRollout{stamp: revNew, applied: revNew}},
+		{"upgrade with a config change rolls anyway", workloadWith(legacy, nil), hashCfg2, false, "", credentialRollout{stamp: revNew, applied: revNew}},
 		{"adopted and unchanged keeps the template", workloadWith(legacy, map[string]string{resources.AppliedCredentialsRevisionAnnotation: revNew}), hashCfg, false, "", credentialRollout{applied: revNew}},
 		{"memfile rotation is held", workloadWith(stamped(revOld), nil), hashCfg, false, "", credentialRollout{stamp: revOld, applied: revOld, pending: revNew}},
 		{"memfile rotation after adoption is held", workloadWith(legacy, adopted), hashCfg, false, "", credentialRollout{applied: revOld, pending: revNew}},
 		{"database leases roll", workloadWith(stamped(revOld), nil), hashCfg, true, "", credentialRollout{stamp: revNew, applied: revNew}},
 		{"approval of this revision rolls", workloadWith(stamped(revOld), nil), hashCfg, false, revNew, credentialRollout{stamp: revNew, applied: revNew}},
 		{"approval of another revision does not", workloadWith(stamped(revOld), nil), hashCfg, false, revOld, credentialRollout{stamp: revOld, applied: revOld, pending: revNew}},
-		{"a config change applies the held revision", workloadWith(stamped(revOld), nil), "cfg-2", false, "", credentialRollout{stamp: revNew, applied: revNew}},
+		{"a config change applies the held revision", workloadWith(stamped(revOld), nil), hashCfg2, false, "", credentialRollout{stamp: revNew, applied: revNew}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,7 +154,7 @@ func rotateSecret(t *testing.T, c client.Client, name, password string) {
 // the lease files and let Kea hand out addresses that are still in use.
 func TestMemfileLeasesHoldCredentialRollouts(t *testing.T) {
 	for _, ha := range []bool{false, true} {
-		name := "standalone"
+		name := subtestStandalone
 		if ha {
 			name = "ha"
 		}

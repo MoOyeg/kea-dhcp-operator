@@ -367,6 +367,10 @@ To change the mode during a maintenance window:
 4. The deletion triggers a reconcile, which creates the new workload and clears the condition. With memfile leases, import the exported leases into every new pod as soon as it is running.
 5. Verify that a client from before the migration renews and keeps its address, and that a new client gets a different one, as in [Step 5](#step-5-test-dhcp-lease-acquisition).
 
+### Upgrading the operator with memfile leases
+
+When an operator release changes how HA pods are rendered, the StatefulSet would normally roll both peers a few seconds apart, and the replacement peers would synchronize from each other with no leases left. The operator keeps the existing pod template of memfile workloads instead and reports `RestartPending=True`; see [Operator upgrades and memfile leases](crds.md#operator-upgrades-and-memfile-leases). To apply the new template without losing leases, export the leases from one peer, approve the restart, then import them into each new pod as described in [Preserving memfile leases](#preserving-memfile-leases).
+
 ### If the target does not start
 
 Roll back the same way in reverse: revert the spec to the original mode, wait for `ModeChangeRequiresMigration`, then delete the new workload with foreground deletion. The operator recreates the original workload. With memfile leases, export from the new pods first if they served any clients, and import into the recreated pods, together with the export taken before the migration.

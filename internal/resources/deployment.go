@@ -60,6 +60,17 @@ const (
 	// condition names restarts the pods with that revision even though their
 	// memfile leases live in pod-local storage.
 	ApproveCredentialRolloutAnnotation = "kea.openshift.io/approve-credential-rollout"
+	// TemplateRevisionAnnotation sits on the Deployment or StatefulSet object
+	// and records which TemplateRevision rendered its pod template.
+	TemplateRevisionAnnotation = "kea.openshift.io/template-revision"
+	// AppliedGenerationAnnotation sits on the Deployment or StatefulSet object
+	// and records the CR generation its pod template was last rendered from.
+	AppliedGenerationAnnotation = "kea.openshift.io/applied-generation"
+	// ApproveRestartAnnotation goes on a KeaDhcp4Server or KeaDhcp6Server.
+	// Setting it to the revision a RestartPending condition names restarts
+	// pods that keep memfile leases in pod-local storage with the current
+	// operator's pod template.
+	ApproveRestartAnnotation = "kea.openshift.io/approve-restart"
 	// OperatorAnnotationPrefix is the prefix of the annotations the operator
 	// owns on the objects it manages.
 	OperatorAnnotationPrefix = "kea.openshift.io/"

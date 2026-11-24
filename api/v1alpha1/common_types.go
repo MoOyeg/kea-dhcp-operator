@@ -657,6 +657,12 @@ const (
 	// Secret changed but the pods were not restarted, because restarting them
 	// would discard memfile leases kept in pod-local storage.
 	ConditionTypeCredentialsRolloutPending = "CredentialsRolloutPending"
+
+	// ConditionTypeRestartPending indicates the operator renders the pods
+	// differently than the release that created them, but did not restart
+	// them, because that would discard memfile leases kept in pod-local
+	// storage.
+	ConditionTypeRestartPending = "RestartPending"
 )
 
 const (

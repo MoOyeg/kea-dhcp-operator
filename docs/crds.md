@@ -92,6 +92,16 @@ kubectl annotate kd4 <name> -n <namespace> --overwrite \
 
 An approval covers only the revision it names; a later rotation is held again. To keep leases across the restart, export and import them as described in [Preserving memfile leases](ha.md#preserving-memfile-leases).
 
+### Operator upgrades and memfile leases
+
+An operator release can render the pod template differently, which restarts the pods. With memfile leases, standalone or HA, that restart discards the leases: during a StatefulSet rolling update the replacement peers come up seconds apart and cannot resynchronize from each other. The operator therefore keeps the existing pod template of such workloads after an upgrade and reports `RestartPending=True`, naming the new template revision. The new template is applied with the next spec or configuration change, when a database lease backend is used, or when you approve it:
+
+```bash
+kubectl annotate kd4 <name> -n <namespace> --overwrite kea.openshift.io/approve-restart=<revision>
+```
+
+Before approving, [preserve the leases](ha.md#preserving-memfile-leases) if they matter. Each workload records the template revision that rendered it in the `kea.openshift.io/template-revision` annotation on its Deployment or StatefulSet.
+
 Upgrading the operator never restarts pods to start tracking credentials: workloads created by an earlier release adopt their current revision, recorded on the Deployment or StatefulSet object, without a pod template change. A Secret rotated before the upgrade is therefore not detected until it changes again.
 
 To rotate a database password: create the new credential in the database (MySQL can keep both passwords with `RETAIN CURRENT PASSWORD`), update the Secret, wait for the pods to roll or approve the pending revision, then revoke the old credential.

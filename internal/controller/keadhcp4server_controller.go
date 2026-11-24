@@ -155,20 +155,22 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 5. Extract common pod parameters.
 	pp := r.resolveDhcp4PodParams(server)
-	var current client.Object = &appsv1.Deployment{}
-	if haEnabled {
-		current = &appsv1.StatefulSet{}
-	}
-	rollout, err := planCredentialRollout(ctx, r.Client,
-		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, current,
-		credRevision, configHash, leasesSurvivePodReplacement(server.Spec.LeaseDatabase),
-		server.Annotations[resources.ApproveCredentialRolloutAnnotation])
+	// Decide what may restart the pods: a credentials rollout, and a pod
+	// template rendered by an earlier operator release, are both held back
+	// while the pods keep memfile leases in pod-local storage.
+	durable := leasesSurvivePodReplacement(server.Spec.LeaseDatabase)
+	existing, err := getWorkload(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, haEnabled)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	rollout := decideCredentialRollout(existing, credRevision, configHash, durable,
+		server.Annotations[resources.ApproveCredentialRolloutAnnotation])
 	reportCredentialRollout(&server.Status.Conditions, rollout)
 	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, rollout.stamp)
 	pp.appliedCredentials = rollout.applied
+	pp.templateHold = decideTemplateHold(existing, server, durable, configHash, rollout.stamp)
+	reportRestartPending(&server.Status.Conditions, pp.templateHold)
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp4StorkAgent(ctx, server)
@@ -214,6 +216,8 @@ type dhcp4PodParams struct {
 	tlsSecretName  string
 	// appliedCredentials is recorded on the workload object.
 	appliedCredentials string
+	// templateHold keeps an earlier release's pod template; see decideTemplateHold.
+	templateHold templateHold
 }
 
 // resolveDhcp4PodParams extracts common pod parameters from the CR spec.
@@ -399,6 +403,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 	}
 	sts := resources.BuildStatefulSet(sp)
 	withAppliedCredentials(sts, pp.appliedCredentials)
+	applyTemplateHold(sts, pp.templateHold)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, sts); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling StatefulSet: %w", err)
 	}
@@ -457,6 +462,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, pp.appliedCredentials)
+	applyTemplateHold(deploy, pp.templateHold)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling Deployment: %w", err)
 	}
