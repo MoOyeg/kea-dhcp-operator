@@ -11,6 +11,7 @@ This guide walks through deploying a Kea DHCPv4 server in **High Availability (H
 - [Step 3: Deploy a Basic HA Server (memfile)](#step-3-deploy-a-basic-ha-server-memfile)
 - [Step 4: Verify HA Status](#step-4-verify-ha-status)
 - [Step 5: Test DHCP Lease Acquisition](#step-5-test-dhcp-lease-acquisition)
+- [Changing between standalone and HA](#changing-between-standalone-and-ha)
 - [Appendix A: HA with MySQL Backend (Percona XtraDB)](#appendix-a-ha-with-mysql-backend-percona-xtradb)
 - [Appendix B: HA on a Secondary Network (NAD)](#appendix-b-ha-on-a-secondary-network-nad)
 - [Troubleshooting](#troubleshooting)
@@ -333,6 +334,28 @@ udhcpc: lease of 192.168.1.100 obtained from 192.168.1.x, lease time 43200
 ```bash
 kubectl logs -n kea-system dhcp4-ha-dhcp4-0 -c dhcp4 | grep DHCP4_LEASE_ALLOC
 ```
+
+---
+
+## Changing between standalone and HA
+
+A standalone server runs as a Deployment and an HA server as a StatefulSet. Adding or removing `high-availability` on an existing CR would start the new workload next to the old one, and both would answer DHCP requests for the same pool. The operator therefore refuses the change in place: the CR reports `Degraded=True` and `Ready=False` with reason `ModeChangeRequiresMigration`, its phase becomes `Error`, and the running workload keeps serving unchanged. An umbrella `KeaServer` reports the child as not ready.
+
+To change the mode during a maintenance window:
+
+1. Apply the target spec to the CR (or to the umbrella `KeaServer`). Confirm the condition above appears and the old pods are still serving.
+2. Decide what happens to lease state. With a MySQL or PostgreSQL lease database, the new servers read the same leases. With memfile, leases live in the pod's `emptyDir` and are **not** carried over; clients get fresh allocations. Use a database backend if lease continuity across the migration matters.
+3. Delete the old workload with foreground cascading deletion. The object stays, and the operator keeps refusing the change, until its pods are gone, so the old and new servers never run at the same time:
+
+   ```bash
+   # standalone -> HA: the old workload is the Deployment
+   kubectl delete deployment <cr-name>-dhcp4 -n <namespace> --cascade=foreground --wait=true
+   # HA -> standalone: the old workload is the StatefulSet
+   kubectl delete statefulset <cr-name>-dhcp4 -n <namespace> --cascade=foreground --wait=true
+   ```
+
+4. The deletion triggers a reconcile, which creates the new workload and clears the condition. Wait for the new pods to be ready, then verify allocation and renewal from a test client as in [Step 5](#step-5-test-dhcp-lease-acquisition).
+5. To roll back, revert the spec and delete the new workload the same way.
 
 ---
 

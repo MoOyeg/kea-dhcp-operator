@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -86,6 +87,17 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if replicas == nil {
 		one := int32(1)
 		replicas = &one
+	}
+
+	// Refuse to switch between standalone and HA in place: the new workload
+	// kind would start next to the old one and both would serve the pool.
+	// This runs before anything is rendered or written.
+	conflict, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if conflict != "" {
+		return r.blockDhcp4ModeChange(ctx, server, conflict)
 	}
 
 	// 2. Auto-fill empty HA peer URLs from the StatefulSet naming convention.
@@ -584,6 +596,47 @@ func (r *KeaDhcp4ServerReconciler) applyHAConfigs(
 		}
 	}
 	return nil
+}
+
+// dhcp4ModeConflict reports a workload of the other kind (a Deployment when
+// HA is requested, a StatefulSet when it is not) that this CR controls. It
+// returns a description of the conflict, or "" when there is none. Objects
+// with the same name that another owner controls are not this server's.
+func (r *KeaDhcp4ServerReconciler) dhcp4ModeConflict(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component string, haEnabled bool) (string, error) {
+	var other client.Object = &appsv1.StatefulSet{}
+	kind, requested := "StatefulSet", "standalone"
+	if haEnabled {
+		other, kind, requested = &appsv1.Deployment{}, "Deployment", "high-availability"
+	}
+	key := types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}
+	if err := r.Get(ctx, key, other); err != nil {
+		if errors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("checking for an existing %s: %w", kind, err)
+	}
+	if !metav1.IsControlledBy(other, server) {
+		return "", nil
+	}
+	return fmt.Sprintf("%s mode was requested, but %s %s from the other mode still serves this server. "+
+		"Changing between standalone and high-availability requires a maintenance migration; "+
+		"see docs/ha.md, \"Changing between standalone and HA\". The running workload is left unchanged.",
+		requested, kind, key.Name), nil
+}
+
+// blockDhcp4ModeChange reports a refused mode change. Nothing is rendered,
+// written or scaled, and the reconcile does not retry on its own: the next
+// spec change, or the old workload going away, triggers it again.
+func (r *KeaDhcp4ServerReconciler) blockDhcp4ModeChange(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, msg string) (ctrl.Result, error) {
+	const reason = "ModeChangeRequiresMigration"
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", reason, msg)
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", reason, "The requested topology is not applied")
+	server.Status.Phase = keav1alpha1.PhaseError
+	if err := r.Status().Update(ctx, server); err != nil {
+		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
+	}
+	r.Recorder.Event(server, corev1.EventTypeWarning, reason, msg)
+	return ctrl.Result{}, nil
 }
 
 // failDhcp4Render records a specification that cannot be rendered and stops
