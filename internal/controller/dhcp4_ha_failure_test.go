@@ -88,7 +88,7 @@ func haDhcp4Server(replicas int32, peers ...string) *keav1alpha1.KeaDhcp4Server 
 		ObjectMeta: metav1.ObjectMeta{Name: testDhcp4CR, Namespace: testNamespaceDefault, UID: "uid-ha-test"},
 		Spec: keav1alpha1.KeaDhcp4ServerSpec{
 			Replicas:         &replicas,
-			InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: []string{"eth0"}},
+			InterfacesConfig: keav1alpha1.InterfacesConfig{Interfaces: []string{testIfaceEth0}},
 			HighAvailability: ha,
 			ValidLifetime:    &life,
 			Subnet4: []keav1alpha1.Subnet4{{ID: 1, Subnet: "192.0.2.0/24",

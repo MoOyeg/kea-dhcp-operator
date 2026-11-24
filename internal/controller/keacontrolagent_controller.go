@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
@@ -84,6 +85,13 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 		}
 		renderer.ResolvedAuthPasswords = placeholders
+	}
+
+	// Resolve the referenced credential Secrets. Their revision goes on the
+	// pod template, so rotating one rolls the pods.
+	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, agent, &agent.Status.Conditions, &agent.Status.Phase, secretEnvVars)
+	if done {
+		return ctrl.Result{}, err
 	}
 
 	configJSON, err := renderer.RenderJSON()
@@ -143,6 +151,7 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		affinity = agent.Spec.Placement.Affinity
 		podAnnotations = agent.Spec.Placement.PodAnnotations
 	}
+	podAnnotations = withCredentialsRevision(podAnnotations, credRevision)
 
 	var tlsSecretName string
 	if agent.Spec.TLS != nil {
@@ -206,6 +215,7 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	agent.Status.ConfigHash = configHash
 	agent.Status.ConfigMapRef = resources.ConfigMapName(agent.Name, component)
 	agent.Status.ObservedGeneration = agent.Generation
+	clearDegraded(&agent.Status.Conditions)
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
 		agent.Status.Phase = keav1alpha1.PhaseRunning
@@ -234,5 +244,7 @@ func (r *KeaControlAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueReferencingCRs(mgr.GetClient(), listCtrlAgentSecretRefs))).
 		Complete(r)
 }

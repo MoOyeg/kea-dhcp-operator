@@ -79,12 +79,12 @@ func planHAConfigs(r haConfigRenderer, ha *keav1alpha1.HAConfig, replicas int32)
 	return plan, nil
 }
 
-// resolveCondition sets condType to False when an earlier failure raised it,
+// clearDegraded resolves a Degraded condition raised by an earlier failure,
 // without adding the condition to resources that never failed.
-func resolveCondition(conditions *[]keav1alpha1.ConditionStatus, condType, reason, message string) {
+func clearDegraded(conditions *[]keav1alpha1.ConditionStatus) {
 	for _, c := range *conditions {
-		if c.Type == condType {
-			setCondition(conditions, condType, "False", reason, message)
+		if c.Type == keav1alpha1.ConditionTypeDegraded {
+			setCondition(conditions, keav1alpha1.ConditionTypeDegraded, "False", "Reconciled", "Configuration applied")
 			return
 		}
 	}

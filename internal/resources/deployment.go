@@ -46,6 +46,10 @@ const (
 	TLSVolumeName            = "kea-tls"
 	TLSMountPath             = "/etc/kea/tls"
 	ConfigHashAnnotation     = "kea.openshift.io/config-hash"
+	// CredentialsRevisionAnnotation carries a token derived from the names,
+	// UIDs and resourceVersions of the credential Secrets a pod references
+	// (never their data), so updating one of them rolls the pods.
+	CredentialsRevisionAnnotation = "kea.openshift.io/credentials-revision"
 )
 
 // defaultComponentImage maps a component name to its default container image.

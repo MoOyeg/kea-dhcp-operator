@@ -61,7 +61,21 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 | `readyReplicas` | Number of ready pods |
 | `configHash` | SHA-256 hash of the rendered configuration |
 | `configMapRef` | Name of the ConfigMap containing the config |
-| `conditions` | `Ready`, `ConfigurationValid`, `Progressing` |
+| `conditions` | `Ready`, `ConfigurationValid`, `Progressing`, and `Degraded` when something blocks the requested configuration |
+
+`Degraded=True` carries one of these reasons:
+
+| Reason | Meaning |
+|--------|---------|
+| `ConfigApplyError` | The configuration is valid but a ConfigMap write failed; the workload keeps the last applied configuration and the reconcile retries |
+| `ModeChangeRequiresMigration` | `high-availability` was added or removed on a running server; see [Changing between standalone and HA](ha.md#changing-between-standalone-and-ha) |
+| `CredentialsUnavailable` | A referenced credential Secret or key does not exist; the running pods are left alone until it does |
+
+### Credential Secrets and rotation
+
+Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets reach Kea through environment variables read at pod startup. The operator watches every Secret these fields reference and stamps a `kea.openshift.io/credentials-revision` annotation on the pod template. The annotation is derived from the Secrets' names, UIDs and resource versions, never from their data. Updating a referenced Secret, or deleting and recreating it, therefore rolls the pods so they read the new value; any update counts, including a metadata-only one.
+
+To rotate a database password: create the new credential in the database, update the Secret, wait for the pods to roll and reconnect, then revoke the old credential. A standalone server restarts once during the rollout.
 
 ---
 

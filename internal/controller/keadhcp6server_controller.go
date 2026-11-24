@@ -110,6 +110,13 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
+	// Resolve the referenced credential Secrets. Their revision goes on the
+	// pod template, so rotating one rolls the pods.
+	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, server, &server.Status.Conditions, &server.Status.Phase, secretEnvVars)
+	if done {
+		return ctrl.Result{}, err
+	}
+
 	configJSON, err := renderer.RenderJSON()
 	if err != nil {
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
@@ -155,6 +162,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	pp := r.resolveDhcp6PodParams(server)
+	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, credRevision)
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp6StorkAgent(ctx, server)
@@ -353,6 +361,7 @@ func (r *KeaDhcp6ServerReconciler) updateDhcp6Status(ctx context.Context, server
 	server.Status.ConfigHash = configHash
 	server.Status.ConfigMapRef = resources.ConfigMapName(server.Name, component)
 	server.Status.ObservedGeneration = server.Generation
+	clearDegraded(&server.Status.Conditions)
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
 		server.Status.Phase = keav1alpha1.PhaseRunning
@@ -383,7 +392,8 @@ func (r *KeaDhcp6ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&monitoringv1.PodMonitor{}).
 		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
 			enqueueStorkDependents(listStorkEnabledDhcp6, mgr.GetClient()))).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
-			enqueueOnStorkTokenSecret(listStorkEnabledDhcp6, mgr.GetClient()))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(anyOf(
+			enqueueOnStorkTokenSecret(listStorkEnabledDhcp6, mgr.GetClient()),
+			enqueueReferencingCRs(mgr.GetClient(), listDhcp6SecretRefs)))).
 		Complete(r)
 }

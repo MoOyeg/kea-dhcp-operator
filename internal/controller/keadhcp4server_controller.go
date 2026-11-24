@@ -114,28 +114,13 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// we use env var placeholders in the config and SecretKeyRef env vars
 	// on the container. The placeholders are expanded at startup.
 	renderer := kea.NewDhcp4ConfigRenderer(&server.Spec)
-	var secretEnvVars []corev1.EnvVar
+	secretEnvVars := dhcp4CredentialEnv(server, renderer)
 
-	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	for i := range server.Spec.HostsDatabases {
-		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
-			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
-			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
-			secretEnvVars = append(secretEnvVars, envs...)
-			for len(renderer.HostsDBsCreds) <= i {
-				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
-			}
-			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
-		}
+	// Resolve the referenced credential Secrets. Their revision goes on the
+	// pod template, so rotating one rolls the pods.
+	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, server, &server.Status.Conditions, &server.Status.Phase, secretEnvVars)
+	if done {
+		return ctrl.Result{}, err
 	}
 
 	// 4. Render and reconcile configuration. Everything is rendered and
@@ -183,6 +168,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 5. Extract common pod parameters.
 	pp := r.resolveDhcp4PodParams(server)
+	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, credRevision)
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp4StorkAgent(ctx, server)
@@ -551,7 +537,7 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	server.Status.ConfigHash = configHash
 	server.Status.ConfigMapRef = resources.ConfigMapName(server.Name, component)
 	server.Status.ObservedGeneration = server.Generation
-	resolveCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "Reconciled", "Configuration applied")
+	clearDegraded(&server.Status.Conditions)
 
 	// Compute NAD addresses from subnet + replica count.
 	server.Status.NADAddresses = computeNADAddresses(nadSubnet(server), int(*replicas))
@@ -697,8 +683,7 @@ func (r *KeaDhcp4ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&monitoringv1.PodMonitor{}).
 		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
 			enqueueStorkDependents(listStorkEnabledDhcp4, mgr.GetClient()))).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
-			enqueueOnStorkTokenSecret(listStorkEnabledDhcp4, mgr.GetClient()))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(dhcp4SecretMapFunc(mgr.GetClient()))).
 		Complete(r)
 }
 
@@ -726,4 +711,43 @@ func computeNADAddresses(subnetCIDR string, replicas int) []string {
 		addrs[i] = addr.String()
 	}
 	return addrs
+}
+
+// dhcp4CredentialEnv builds the SecretKeyRef env vars for every database that
+// references credentials and points the renderer at their placeholders.
+func dhcp4CredentialEnv(server *keav1alpha1.KeaDhcp4Server, renderer *kea.Dhcp4ConfigRenderer) []corev1.EnvVar {
+	var secretEnvVars []corev1.EnvVar
+
+	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	for i := range server.Spec.HostsDatabases {
+		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
+			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
+			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
+			secretEnvVars = append(secretEnvVars, envs...)
+			for len(renderer.HostsDBsCreds) <= i {
+				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
+			}
+			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
+		}
+	}
+	return secretEnvVars
+}
+
+// dhcp4SecretMapFunc maps a Secret event to the KeaDhcp4Servers that depend
+// on it: Stork-enabled servers for a Stork agent token Secret, and servers
+// whose database credentials reference it.
+func dhcp4SecretMapFunc(c client.Reader) handler.MapFunc {
+	return anyOf(
+		enqueueOnStorkTokenSecret(listStorkEnabledDhcp4, c),
+		enqueueReferencingCRs(c, listDhcp4SecretRefs),
+	)
 }
