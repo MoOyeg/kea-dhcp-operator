@@ -339,12 +339,22 @@ kubectl logs -n kea-system dhcp4-ha-dhcp4-0 -c dhcp4 | grep DHCP4_LEASE_ALLOC
 
 ## Changing between standalone and HA
 
-A standalone server runs as a Deployment and an HA server as a StatefulSet. Adding or removing `high-availability` on an existing CR would start the new workload next to the old one, and both would answer DHCP requests for the same pool. The operator therefore refuses the change in place: the CR reports `Degraded=True` and `Ready=False` with reason `ModeChangeRequiresMigration`, its phase becomes `Error`, and the running workload keeps serving unchanged. An umbrella `KeaServer` reports the child as not ready.
+A standalone server runs as a Deployment and an HA server as a StatefulSet. Adding or removing `high-availability` on an existing CR would start the new workload next to the old one, and both would answer DHCP requests for the same pool. The operator therefore refuses the change in place and never writes or scales anything for it. The running workload keeps serving unchanged, and an umbrella `KeaServer` reports the child as not ready.
+
+The operator validates the requested (target) configuration before it reports anything about the mode change:
+
+| CR status | Meaning | What to do |
+|-----------|---------|------------|
+| `ConfigurationValid=False` | The target does not render (for example invalid DDNS settings or duplicate HA peer names) | Fix the spec. Do not delete anything. |
+| `Degraded=True`, reason `CredentialsUnavailable` | A Secret or key the target references is missing | Create it. Do not delete anything. |
+| `Degraded=True`, reason `ModeChangeRequiresMigration`, and `ConfigurationValid=True` | The target renders and its credentials exist | You can migrate as below. |
+
+This check covers what the operator can see. It cannot prove the new pods will start: network attachment, database reachability and Kea's own runtime checks are only exercised when they run. Plan for the [recovery](#if-the-target-does-not-start) path below.
 
 To change the mode during a maintenance window:
 
-1. Apply the target spec to the CR (or to the umbrella `KeaServer`). Confirm the condition above appears and the old pods are still serving.
-2. Decide what happens to lease state. With a MySQL or PostgreSQL lease database, the new servers read the same leases. With memfile, leases live in the pod's `emptyDir` and are **not** carried over; clients get fresh allocations. Use a database backend if lease continuity across the migration matters.
+1. Apply the target spec to the CR (or to the umbrella `KeaServer`). Wait for `ModeChangeRequiresMigration` with `ConfigurationValid=True`, as in the table above.
+2. Lease state. With a MySQL or PostgreSQL lease database, the new servers read the same leases and nothing else is needed. With memfile, leases live in each pod's `emptyDir`. Export them immediately before the next step, as described in [Preserving memfile leases](#preserving-memfile-leases). Do not start the target with an empty lease file: Kea would hand out addresses that clients still hold.
 3. Delete the old workload with foreground cascading deletion. The object stays, and the operator keeps refusing the change, until its pods are gone, so the old and new servers never run at the same time:
 
    ```bash
@@ -354,8 +364,35 @@ To change the mode during a maintenance window:
    kubectl delete statefulset <cr-name>-dhcp4 -n <namespace> --cascade=foreground --wait=true
    ```
 
-4. The deletion triggers a reconcile, which creates the new workload and clears the condition. Wait for the new pods to be ready, then verify allocation and renewal from a test client as in [Step 5](#step-5-test-dhcp-lease-acquisition).
-5. To roll back, revert the spec and delete the new workload the same way.
+4. The deletion triggers a reconcile, which creates the new workload and clears the condition. With memfile leases, import the exported leases into every new pod as soon as it is running.
+5. Verify that a client from before the migration renews and keeps its address, and that a new client gets a different one, as in [Step 5](#step-5-test-dhcp-lease-acquisition).
+
+### If the target does not start
+
+Roll back the same way in reverse: revert the spec to the original mode, wait for `ModeChangeRequiresMigration`, then delete the new workload with foreground deletion. The operator recreates the original workload. With memfile leases, export from the new pods first if they served any clients, and import into the recreated pods, together with the export taken before the migration.
+
+### Preserving memfile leases
+
+Kea reads its memfile lease file at startup. Leases can be carried across a pod replacement by exporting the lease rows from the old pods and appending them to the new pods' lease file, then restarting Kea inside the pod. Restarting the process, not the pod, keeps the pod's `emptyDir`. This needs `persist` left at its default (`true`). The commands below assume the default lease file path; use the path from `lease-database.name` if you set one, and `dhcp6` and `kea-leases6.csv` for DHCPv6.
+
+Export from one old pod immediately before deleting the old workload. For HA, either peer holds the full set:
+
+```bash
+kubectl exec -n <namespace> <old-pod> -c dhcp4 -- sh -c \
+  'cd /var/lib/kea && for f in kea-leases4.csv.completed kea-leases4.csv.1 kea-leases4.csv.2 kea-leases4.csv; do [ -f "$f" ] && tail -n +2 "$f"; done' \
+  > leases4.rows
+```
+
+The loop includes the files Kea's lease file cleanup keeps, in the order Kea loads them, and drops each header line.
+
+Import into each new pod as soon as it is running, then restart Kea in it. For HA, do one peer at a time and wait until it is back in `LOAD-BALANCING` (or `HOT-STANDBY`) before the next:
+
+```bash
+kubectl exec -i -n <namespace> <new-pod> -c dhcp4 -- sh -c 'cat >> /var/lib/kea/kea-leases4.csv' < leases4.rows
+kubectl exec -n <namespace> <new-pod> -c dhcp4 -- sh -c 'kill -TERM $(pidof kea-dhcp4)'
+```
+
+Kubernetes restarts the container in the same pod, and Kea loads the imported leases. Rows are applied in file order, so an imported lease replaces anything the new server allocated for the same address in the seconds before the import. Keep that window short. A client whose address was reassigned in it gets a NAK at its next renewal and requests a new address.
 
 ---
 

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,7 +31,10 @@ import (
 	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
 
-const reasonModeChange = "ModeChangeRequiresMigration"
+const (
+	reasonModeChange  = "ModeChangeRequiresMigration"
+	reasonRenderError = "RenderError"
+)
 
 func standaloneDhcp4Server() *keav1alpha1.KeaDhcp4Server {
 	s := haDhcp4Server(1)
@@ -179,5 +183,91 @@ func TestDhcp4UnownedWorkloadOfOtherKindIsIgnored(t *testing.T) {
 	}
 	if d := conditionOf(getDhcp4(t, c), keav1alpha1.ConditionTypeDegraded); d != nil && d.Status == condTrue {
 		t.Errorf("Degraded = %+v, want no mode-change condition for an unowned object", d)
+	}
+}
+
+// ModeChangeRequiresMigration tells the operator it is safe to delete the
+// serving workload, so it must only appear for a target that would start: an
+// invalid or credential-less target reports that instead, and the serving
+// workload stays untouched either way.
+func TestDhcp4MigrationConditionRequiresAValidTarget(t *testing.T) {
+	ttl := int32(600)
+	tests := []struct {
+		name       string
+		target     func(s *keav1alpha1.KeaDhcp4Server)
+		objs       []client.Object
+		wantReason string
+		wantErr    bool
+	}{
+		{
+			name: "invalid DDNS",
+			target: func(s *keav1alpha1.KeaDhcp4Server) {
+				s.Spec.DDNSTTL, s.Spec.DDNSTTLPercent = &ttl, ttlPercentJSON("0.5")
+			},
+			wantReason: reasonRenderError, wantErr: true,
+		},
+		{
+			name: "duplicate HA peers",
+			target: func(s *keav1alpha1.KeaDhcp4Server) {
+				s.Spec.HighAvailability.Peers[1].Name = s.Spec.HighAvailability.Peers[0].Name
+			},
+			wantReason: reasonRenderError, wantErr: true,
+		},
+		{
+			name: "missing lease database credentials",
+			target: func(s *keav1alpha1.KeaDhcp4Server) {
+				s.Spec.LeaseDatabase = &keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMySQL, Name: testKeaName, Host: testDBHost,
+					CredentialsSecretRef: &corev1.LocalObjectReference{Name: "not-created-yet"}}
+			},
+			wantReason: reasonCredentialsUnavailable,
+		},
+		{
+			name:       "valid target",
+			target:     func(*keav1alpha1.KeaDhcp4Server) {},
+			wantReason: reasonModeChange,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, c := newDhcp4Reconciler(t, nil, append([]client.Object{standaloneDhcp4Server()}, tc.objs...)...)
+			if err := reconcileDhcp4(r); err != nil {
+				t.Fatal(err)
+			}
+			deploy, _ := workloadVersions(t, c)
+
+			updateDhcp4Spec(t, c, func(s *keav1alpha1.KeaDhcp4Server) {
+				ha := haDhcp4Server(2)
+				s.Spec.HighAvailability, s.Spec.Replicas = ha.Spec.HighAvailability, ha.Spec.Replicas
+				tc.target(s)
+			})
+			err := reconcileDhcp4(r)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Reconcile error = %v, want error: %v", err, tc.wantErr)
+			}
+
+			s := getDhcp4(t, c)
+			if gotDeploy, gotSTS := workloadVersions(t, c); gotDeploy != deploy || gotSTS != "" {
+				t.Errorf("workloads changed: Deployment %q -> %q, StatefulSet %q", deploy, gotDeploy, gotSTS)
+			}
+			valid := conditionOf(s, keav1alpha1.ConditionTypeConfigValid)
+			degraded := conditionOf(s, keav1alpha1.ConditionTypeDegraded)
+			switch tc.wantReason {
+			case reasonModeChange:
+				if degraded == nil || degraded.Reason != reasonModeChange || valid == nil || valid.Status != condTrue {
+					t.Errorf("valid target: Degraded %+v, ConfigurationValid %+v; want the migration condition with a valid configuration", degraded, valid)
+				}
+			case reasonRenderError:
+				if valid == nil || valid.Status != condFalse {
+					t.Errorf("ConfigurationValid = %+v, want False", valid)
+				}
+				if degraded != nil && degraded.Reason == reasonModeChange {
+					t.Error("an invalid target was reported as ready for migration")
+				}
+			default:
+				if degraded == nil || degraded.Reason != tc.wantReason {
+					t.Errorf("Degraded = %+v, want reason %s", degraded, tc.wantReason)
+				}
+			}
+		})
 	}
 }

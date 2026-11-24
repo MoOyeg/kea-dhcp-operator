@@ -89,17 +89,6 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		replicas = &one
 	}
 
-	// Refuse to switch between standalone and HA in place: the new workload
-	// kind would start next to the old one and both would serve the pool.
-	// This runs before anything is rendered or written.
-	conflict, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if conflict != "" {
-		return r.blockDhcp4ModeChange(ctx, server, conflict)
-	}
-
 	// 2. Auto-fill empty HA peer URLs from the StatefulSet naming convention.
 	if haEnabled {
 		haPort := int32(8000)
@@ -123,32 +112,30 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// 4. Render and reconcile configuration. Everything is rendered and
-	// validated before the first write, and a failed write stops the
-	// reconcile before the workload template can point at the new revision.
-	var configHash string
+	// 4. Render and validate the whole configuration. Nothing is written yet.
+	plan, configJSON, err := renderDhcp4(renderer, server, *replicas, haEnabled)
+	if err != nil {
+		return r.failDhcp4Render(ctx, server, err)
+	}
 
-	if haEnabled {
-		// HA mode: one ConfigMap per ordinal, each with its own this-server-name.
-		plan, err := planHAConfigs(renderer, server.Spec.HighAvailability, *replicas)
-		if err != nil {
-			return r.failDhcp4Render(ctx, server, err)
-		}
-		if err := r.applyHAConfigs(ctx, server, component, labels, plan); err != nil {
-			return r.failDhcp4Apply(ctx, server, err)
-		}
-		configHash = plan.hash
-	} else {
-		// Standard mode: single ConfigMap.
-		configJSON, err := renderer.RenderJSON()
-		if err != nil {
-			return r.failDhcp4Render(ctx, server, err)
-		}
-		cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
-			return r.failDhcp4Apply(ctx, server, fmt.Errorf("writing ConfigMap: %w", err))
-		}
-		configHash = kea.ComputeHash(configJSON)
+	// Refuse to switch between standalone and HA in place: the new workload
+	// kind would start next to the old one and both would serve the pool.
+	// It runs after the credentials and the rendering above, so
+	// ModeChangeRequiresMigration is only reported for a target that passed
+	// both, and before the first write, so the serving workload is untouched.
+	conflict, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if conflict != "" {
+		return r.blockDhcp4ModeChange(ctx, server, conflict)
+	}
+
+	// Write the configuration. A failed write stops the reconcile before the
+	// workload template can point at the new revision.
+	configHash, err := r.writeDhcp4Configs(ctx, server, component, labels, plan, configJSON)
+	if err != nil {
+		return r.failDhcp4Apply(ctx, server, err)
 	}
 
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered", "Configuration rendered successfully")
@@ -576,6 +563,33 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	return nil
 }
 
+// renderDhcp4 renders and validates the configuration without writing it:
+// one plan per HA ordinal, or the single standalone configuration.
+func renderDhcp4(renderer *kea.Dhcp4ConfigRenderer, server *keav1alpha1.KeaDhcp4Server, replicas int32, haEnabled bool) (*haConfigPlan, []byte, error) {
+	if haEnabled {
+		plan, err := planHAConfigs(renderer, server.Spec.HighAvailability, replicas)
+		return plan, nil, err
+	}
+	configJSON, err := renderer.RenderJSON()
+	return nil, configJSON, err
+}
+
+// writeDhcp4Configs writes the rendered configuration and returns its hash.
+func (r *KeaDhcp4ServerReconciler) writeDhcp4Configs(ctx context.Context, server *keav1alpha1.KeaDhcp4Server,
+	component string, labels map[string]string, plan *haConfigPlan, configJSON []byte) (string, error) {
+	if plan != nil {
+		if err := r.applyHAConfigs(ctx, server, component, labels, plan); err != nil {
+			return "", err
+		}
+		return plan.hash, nil
+	}
+	cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
+		return "", fmt.Errorf("writing ConfigMap: %w", err)
+	}
+	return kea.ComputeHash(configJSON), nil
+}
+
 // applyHAConfigs writes the per-ordinal ConfigMaps of a rendered plan and
 // returns the first write error. The ConfigMaps are still updated in place,
 // so a failure can leave earlier ordinals on the new configuration until the
@@ -627,11 +641,13 @@ func (r *KeaDhcp4ServerReconciler) dhcp4ModeConflict(ctx context.Context, server
 		requested, kind, key.Name), nil
 }
 
-// blockDhcp4ModeChange reports a refused mode change. Nothing is rendered,
-// written or scaled, and the reconcile does not retry on its own: the next
+// blockDhcp4ModeChange reports a refused mode change for a target that passed
+// validation. Nothing is written or scaled, and the reconcile does not retry on its own: the next
 // spec change, or the old workload going away, triggers it again.
 func (r *KeaDhcp4ServerReconciler) blockDhcp4ModeChange(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, msg string) (ctrl.Result, error) {
 	const reason = "ModeChangeRequiresMigration"
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered",
+		"The requested configuration renders and its referenced credentials exist; it has not been started")
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", reason, msg)
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", reason, "The requested topology is not applied")
 	server.Status.Phase = keav1alpha1.PhaseError
