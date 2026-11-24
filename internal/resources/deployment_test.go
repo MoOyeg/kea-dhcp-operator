@@ -17,6 +17,9 @@ limitations under the License.
 package resources
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -160,5 +163,69 @@ func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 				t.Errorf("expected script to end with %q, got %q", tc.wantSuffix, cmd[2])
 			}
 		})
+	}
+}
+
+// TestSecretEnvSubstScriptSubstitutesConfFile runs the generated startup
+// script against a temp copy of the config layout and checks that the env var
+// placeholder is really replaced in the "kea-*.conf" file. The config files
+// are named "*.conf", so a "*.json" glob matched nothing and silently left the
+// placeholder in place.
+func TestSecretEnvSubstScriptSubstitutesConfFile(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	secretEnv := []corev1.EnvVar{{
+		Name: "KEA_TSIG_SECRET_0",
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "tsig"},
+			Key:                  "secret",
+		}},
+	}}
+	deploy := BuildDeployment(DeploymentParams{
+		CRName:         testCRName,
+		Namespace:      testNamespace,
+		Component:      ComponentDdns,
+		Command:        DefaultCommandForComponent(ComponentDdns),
+		ConfigFileName: ConfigFileName(ComponentDdns),
+		ConfigMapName:  "test-ddns",
+		SecretEnvVars:  secretEnv,
+	})
+	script := deploy.Spec.Template.Spec.Containers[0].Command[2]
+	if strings.Contains(script, "*.json") {
+		t.Fatalf("script still targets *.json (config files are *.conf): %q", script)
+	}
+
+	// Lay out template + writable dirs under a temp root and point the script at them.
+	root := t.TempDir()
+	tmpl := filepath.Join(root, "template")
+	cfg := filepath.Join(root, "config")
+	run := filepath.Join(root, "run")
+	for _, d := range []string{tmpl, cfg, run} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	confName := ConfigFileName(ComponentDdns)
+	if err := os.WriteFile(filepath.Join(tmpl, confName), []byte(`{"secret": "$KEA_TSIG_SECRET_0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script = strings.ReplaceAll(script, ConfigTemplateMountPath, tmpl)
+	script = strings.ReplaceAll(script, RunMountPath, run)
+	script = strings.ReplaceAll(script, ConfigMountPath, cfg)
+	// Don't exec the real Kea binary; the substitution is what is under test.
+	script = strings.Replace(script, "exec "+DefaultCommandForComponent(ComponentDdns), "exec true", 1)
+
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "KEA_TSIG_SECRET_0=c2VjcmV0Cg==")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(cfg, confName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"secret": "c2VjcmV0Cg=="}`; string(got) != want {
+		t.Errorf("placeholder not substituted: got %q, want %q", got, want)
 	}
 }
