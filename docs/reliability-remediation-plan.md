@@ -136,10 +136,10 @@ Every pod starts from a complete revision. Invalid input and API write failures 
 ### Explicit migration procedure
 
 1. Identify the currently serving workload, its CR UID, current applied configuration, lease database, and recoverable backup. If both kinds already exist, determine the authoritative lease state before stopping either one.
-2. Validate the target configuration, topology, storage, and required network access before the maintenance window.
+2. Validate the target configuration, topology, storage, and required network access before the maintenance window. Release 1 makes the operator do the part it can see: it resolves credentials and renders the target before evaluating the mode guard, so `ModeChangeRequiresMigration` only appears with `ConfigurationValid=True`; an invalid or credential-less target reports that problem instead.
 3. Stop serving from the source workload through a supported operator-controlled maintenance mechanism. A manual scale-down alone is insufficient if reconciliation immediately restores replicas. If no maintenance mechanism exists, document and test how reconciliation is suspended during migration.
 4. Wait for source pods to terminate and for the old servers to stop answering DHCP traffic. Readiness alone does not stop DHCP broadcast or host-network traffic.
-5. Transfer or restore leases using a backend-appropriate procedure. Never attach one writable memfile lease directory to independent HA peers.
+5. Transfer or restore leases using a backend-appropriate procedure. Never attach one writable memfile lease directory to independent HA peers. For memfile, Release 1 documents export of the lease rows right before the source stops and import into each target pod followed by an in-process restart that keeps the `emptyDir` ([Preserving memfile leases](ha.md#preserving-memfile-leases)). Operator-assisted import before the target serves, which removes the remaining window, belongs with Step 5.
 6. Create the target workload only after the source is stopped and state is ready. Confirm the target's identities and lease records before admitting normal traffic.
 7. Verify allocation and renewal from a test client, then retire only obsolete resources owned by the source. Retain backups and PVCs according to the documented policy.
 8. For rollback, stop the target before restarting the source. Reconcile lease changes made since cutover; restarting an old snapshot without that check can reintroduce conflicting allocations.
@@ -231,7 +231,7 @@ The API makes durability an explicit choice. A durable deployment recovers lease
 
 Database credentials come from `SecretKeyRef` environment variables, but the configuration hash contains placeholders. A change to the Secret does not change the template hash. Existing DHCP controller Secret watches handle Stork tokens, not all referenced database credentials.
 
-Release 1 delivers the watch and the revision token while credentials still travel as environment variables, so that a rotated Secret reaches new pods immediately. When Step 1's Secret-rendered configuration lands in Release 2, the token becomes an input of the configuration hash and the watch stays as is.
+Release 1 delivers the watch and the revision token while credentials still travel as environment variables. A rotated Secret reaches new pods immediately only where a restart loses nothing: with memfile leases in pod-local storage, the rollout is held and reported as `CredentialsRolloutPending` until a configuration change restarts the pods anyway or the user approves that exact revision, and an operator upgrade adopts the running revision without restarting anything. See [Credential Secrets and rotation](crds.md#credential-secrets-and-rotation). When Step 1's Secret-rendered configuration lands in Release 2, the token becomes an input of the configuration hash and the watch stays as is.
 
 ### Implementation steps
 
@@ -241,7 +241,7 @@ Release 1 delivers the watch and the revision token while credentials still trav
 4. Do not expose plaintext or a plain hash of a low-entropy password in annotations. The revision token identifies Kubernetes object revisions, not credential values. Recreating a Secret with the same name must change the token because its UID changes.
 5. Validate required keys before altering a running template. A missing Secret/key should set a clear dependency condition and retain the active workload when one exists. Initial creation should report the dependency failure instead of falsely reporting a valid running deployment.
 6. Record the credential revision alongside the configuration revision as part of the applied workload state. Reconciliation after an operator restart must derive the same desired result and must not create repeated rollouts.
-7. Use the rollout policy appropriate to the workload. Rotate HA peers in a controlled sequence, waiting for health/synchronization as required by the chosen topology. Accept and document the standalone maintenance interruption.
+7. Use the rollout policy appropriate to the workload. Never restart pods whose leases live in pod-local storage without explicit approval; this applies until Step 5 provides durable storage. Rotate HA peers in a controlled sequence, waiting for health/synchronization as required by the chosen topology. Accept and document the standalone maintenance interruption for database-backed leases.
 8. Document database-side rotation order: provision the new credential, update the Kubernetes Secret, wait for all intended pods to authenticate with the new value, then revoke the old credential where the database supports an overlap period. Do not promise uninterrupted rotation for a backend that invalidates the only credential immediately.
 
 Secret environment references are configured on the container; startup preparation must be rerun to replace the active configuration. If switching to projected Secret files later, file refresh alone still does not prove that Kea has reloaded its credentials. [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
@@ -382,6 +382,10 @@ The release grouping ships each step's urgent, low-risk part first. Every PR kee
 | 3 | H2 | Cluster lifecycle and DHCP service acceptance suites | End-to-end scenarios above |
 
 Status: Release 1 (A1, B1, C, F1, H1) is implemented on branch `reliability/release-1` and was validated on an OpenShift cluster with `v0.0.36-rc1` on November 24, 2026: a Percona-backed DHCPv4 HA pair with a Stork server showed no credential in init container logs; a MySQL dual-password rotation rolled the pods exactly once and the new pods wrote leases after the old password was revoked; a deleted credential Secret set `CredentialsUnavailable` without touching the pods; the mode-change guard blocked both directions while the old workload kept serving, and an API watch stream showed the old pods deleted before any new pod was added during the documented foreground-deletion migration and rollback; the existing simple-HA, Stork-metrics and custom-namespace SCC end-to-end tests passed.
+
+Upgrade note for Release 1: the init container script changes (A1), so upgrading restarts HA StatefulSet pods once. With memfile HA leases, follow [Preserving memfile leases](ha.md#preserving-memfile-leases) around the upgrade or accept the loss; Deployment-based servers are not restarted by the upgrade.
+
+Review follow-ups on Release 1 (after the first cluster validation; covered by unit and envtest tests, cluster re-validation pending): credential rollouts no longer restart pods that keep memfile leases, and an upgrade adopts the running revision instead of restarting; optional Secret references are tracked; the mode guard runs after target validation, and the migration procedure preserves memfile leases; and the MySQL/PostgreSQL hook is loaded for hosts databases, without which memfile leases with a MySQL hosts database could not start at all.
 
 Release 1 leaves one known limitation from Step 2: the per-ordinal ConfigMaps are still updated in place, so a failed write can leave ordinal 0 on the new configuration and ordinal 1 on the old one until the retry succeeds. The workload template is not advanced in that case, and B2 removes the window entirely.
 
