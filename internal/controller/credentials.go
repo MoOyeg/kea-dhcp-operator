@@ -44,19 +44,35 @@ const reasonCredentialsUnavailable = "CredentialsUnavailable"
 // opposed to an API error worth retrying.
 var errCredentialsUnavailable = errors.New("referenced credential is unavailable")
 
-// secretKeyRefs returns the keys each referenced Secret must contain, for the
-// SecretKeyRef env vars that carry credentials into Kea at startup.
-func secretKeyRefs(envVars []corev1.EnvVar) map[string][]string {
-	refs := map[string][]string{}
+// secretRef collects how the env vars use one Secret.
+type secretRef struct {
+	// required is true when at least one reference is not optional, so the
+	// Secret must exist.
+	required bool
+	// keys are the keys non-optional references need.
+	keys []string
+}
+
+// secretKeyRefs returns every Secret the SecretKeyRef env vars use. Optional
+// references are included: "optional" only means the Secret or key may be
+// absent, and an existing optional Secret still has to be tracked because
+// its changes only reach Kea when the pods restart.
+func secretKeyRefs(envVars []corev1.EnvVar) map[string]*secretRef {
+	refs := map[string]*secretRef{}
 	for _, ev := range envVars {
 		if ev.ValueFrom == nil || ev.ValueFrom.SecretKeyRef == nil {
 			continue
 		}
 		sel := ev.ValueFrom.SecretKeyRef
-		if sel.Optional != nil && *sel.Optional {
-			continue
+		ref := refs[sel.Name]
+		if ref == nil {
+			ref = &secretRef{}
+			refs[sel.Name] = ref
 		}
-		refs[sel.Name] = append(refs[sel.Name], sel.Key)
+		if sel.Optional == nil || !*sel.Optional {
+			ref.required = true
+			ref.keys = append(ref.keys, sel.Key)
+		}
 	}
 	return refs
 }
@@ -66,10 +82,12 @@ func secretKeyRefs(envVars []corev1.EnvVar) map[string][]string {
 // recreated, or replaced. It is built from Secret names, UIDs and
 // resourceVersions, never from Secret data, so it can sit in a pod template
 // annotation. Any update of a referenced Secret, metadata included, changes
-// it; that conservative choice means a rotation is never missed.
+// it; that conservative choice means a rotation is never missed. An optional
+// Secret that does not exist contributes an "absent" marker, so its
+// disappearance and reappearance change the token as well.
 //
-// A missing Secret or key returns an error wrapping errCredentialsUnavailable.
-// The token is "" when nothing is referenced.
+// A missing required Secret or key returns an error wrapping
+// errCredentialsUnavailable. The token is "" when nothing is referenced.
 func credentialsRevision(ctx context.Context, c client.Reader, namespace string, envVars []corev1.EnvVar) (string, error) {
 	refs := secretKeyRefs(envVars)
 	if len(refs) == 0 {
@@ -83,14 +101,19 @@ func credentialsRevision(ctx context.Context, c client.Reader, namespace string,
 
 	entries := make([]string, 0, len(names))
 	for _, name := range names {
+		ref := refs[name]
 		secret := &corev1.Secret{}
 		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
-			if apierrors.IsNotFound(err) {
+			if !apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("reading credential Secret %q: %w", name, err)
+			}
+			if ref.required {
 				return "", fmt.Errorf("%w: Secret %q not found", errCredentialsUnavailable, name)
 			}
-			return "", fmt.Errorf("reading credential Secret %q: %w", name, err)
+			entries = append(entries, name+"/absent")
+			continue
 		}
-		for _, key := range refs[name] {
+		for _, key := range ref.keys {
 			if _, ok := secret.Data[key]; !ok {
 				return "", fmt.Errorf("%w: Secret %q has no key %q", errCredentialsUnavailable, name, key)
 			}

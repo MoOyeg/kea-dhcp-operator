@@ -136,9 +136,62 @@ func TestCredentialsRevision(t *testing.T) {
 		!strings.Contains(err.Error(), `no key "no-such-key"`) {
 		t.Errorf("missing key: err = %v, want errCredentialsUnavailable naming the key", err)
 	}
-	optional := []corev1.EnvVar{secretEnv("X", "absent", testKeyPassword, true)}
-	if tok, err := credentialsRevision(ctx, c, testNamespaceDefault, optional); err != nil || tok != "" {
-		t.Errorf("optional reference: token %q err %v, want it ignored", tok, err)
+}
+
+// An optional reference may be missing, but when the Secret exists its
+// changes must still roll the pods: env vars are only read at startup.
+func TestCredentialsRevisionTracksOptionalSecrets(t *testing.T) {
+	ctx := context.Background()
+	const optName = "optional-creds"
+	c := fake.NewClientBuilder().WithScheme(controllerTestScheme(t)).
+		WithObjects(credSecret(optName, "uid-a", "first")).Build()
+	envs := []corev1.EnvVar{secretEnv("KEA_AUTH_PASSWORD_0", optName, testKeyPassword, true)}
+	revision := func(step string) string {
+		t.Helper()
+		tok, err := credentialsRevision(ctx, c, testNamespaceDefault, envs)
+		if err != nil {
+			t.Fatalf("%s: optional reference must never be an error: %v", step, err)
+		}
+		if tok == "" {
+			t.Fatalf("%s: optional reference produced no token", step)
+		}
+		return tok
+	}
+
+	present := revision("present")
+	s := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: optName, Namespace: testNamespaceDefault}, s); err != nil {
+		t.Fatal(err)
+	}
+	s.Data[testKeyPassword] = []byte("second")
+	if err := c.Update(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	changed := revision("changed")
+	if changed == present {
+		t.Error("updating an optional Secret did not change the token")
+	}
+	if err := c.Delete(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	gone := revision("deleted")
+	if gone == changed {
+		t.Error("deleting an optional Secret did not change the token")
+	}
+	if again := revision("still deleted"); again != gone {
+		t.Errorf("token of an absent optional Secret is unstable: %q -> %q", gone, again)
+	}
+	if err := c.Create(ctx, credSecret(optName, "uid-b", "third")); err != nil {
+		t.Fatal(err)
+	}
+	if back := revision("recreated"); back == gone || back == changed || back == present {
+		t.Error("recreating an optional Secret did not produce a new token")
+	}
+
+	// An optional Secret without the key is allowed too (the env var is unset).
+	missingKey := []corev1.EnvVar{secretEnv("X", optName, "no-such-key", true)}
+	if _, err := credentialsRevision(ctx, c, testNamespaceDefault, missingKey); err != nil {
+		t.Errorf("optional reference to a missing key: %v", err)
 	}
 }
 
