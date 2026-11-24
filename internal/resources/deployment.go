@@ -358,19 +358,19 @@ func buildSecretEnvSubstCommand(envVars []corev1.EnvVar, origCmd []string) []str
 		sedExpr += fmt.Sprintf(`sed -i "s|\$%s|${%s}|g" %s/*; `, ev.Name, ev.Name, ConfigMountPath)
 	}
 
-	// Build the full command: copy template -> sed substitute -> exec original command.
-	origCmdStr := ""
-	for i, arg := range origCmd {
-		if i > 0 {
-			origCmdStr += " "
-		}
-		origCmdStr += arg
+	// Build the full command: copy template -> sed substitute -> original
+	// command. An original "sh -c" script (the NAD address setup) runs inline:
+	// joining its words into "exec sh -c <script>" would pass only the
+	// script's first word to sh, which then exits without starting Kea.
+	tail := "exec " + strings.Join(origCmd, " ")
+	if len(origCmd) == 3 && origCmd[0] == "sh" && origCmd[1] == "-c" {
+		tail = origCmd[2]
 	}
 	script := fmt.Sprintf(
-		`cp %s/* %s/ && %sexec %s`,
+		`cp %s/* %s/ && %s%s`,
 		ConfigTemplateMountPath, ConfigMountPath,
 		sedExpr,
-		origCmdStr,
+		tail,
 	)
 	return []string{"sh", "-c", script}
 }

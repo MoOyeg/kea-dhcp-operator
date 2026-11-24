@@ -27,6 +27,7 @@ import (
 )
 
 const (
+	testSecretKey = "db-password"
 	testCRName    = "test"
 	testNamespace = "default"
 	testNADSubnet = "10.200.0.0/24"
@@ -108,7 +109,7 @@ func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 		Name: "KEA_LEASE_DB_PASSWORD",
 		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "db"},
-			Key:                  "db-password",
+			Key:                  testSecretKey,
 		}},
 	}}
 
@@ -227,5 +228,63 @@ func TestSecretEnvSubstScriptSubstitutesConfFile(t *testing.T) {
 	}
 	if want := `{"secret": "c2VjcmV0Cg=="}`; string(got) != want {
 		t.Errorf("placeholder not substituted: got %q, want %q", got, want)
+	}
+}
+
+// With a NAD the container command is already an "sh -c" script. The
+// credential wrapper used to append it unquoted ("exec sh -c IFS='./' read
+// ..."), so sh only ran "IFS=./", exited 0 and Kea never started. Run the
+// generated script and require that it gets as far as starting Kea.
+func TestSecretEnvSubstScriptWithNADReachesKea(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	const envName = "KEA_LEASE_DB_PASSWORD"
+	deploy := BuildDeployment(DeploymentParams{
+		CRName:         testCRName,
+		Namespace:      testNamespace,
+		Component:      ComponentDhcp4,
+		Command:        DefaultCommandForComponent(ComponentDhcp4),
+		ConfigFileName: ConfigFileName(ComponentDhcp4),
+		ConfigMapName:  "test-dhcp4",
+		NADInterface:   testNADIface,
+		NADSubnet:      testNADSubnet,
+		SecretEnvVars: []corev1.EnvVar{{
+			Name: envName,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "db"}, Key: testSecretKey}},
+		}},
+	})
+	script := deploy.Spec.Template.Spec.Containers[0].Command[2]
+
+	root := t.TempDir()
+	tmpl, cfg, run := filepath.Join(root, "template"), filepath.Join(root, "config"), filepath.Join(root, "run")
+	for _, d := range []string{tmpl, cfg, run} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	confName := ConfigFileName(ComponentDhcp4)
+	if err := os.WriteFile(filepath.Join(tmpl, confName), []byte(`{"password": "$`+envName+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script = strings.ReplaceAll(script, ConfigTemplateMountPath, tmpl)
+	script = strings.ReplaceAll(script, RunMountPath, run)
+	script = strings.ReplaceAll(script, ConfigMountPath, cfg)
+	// Stand-ins: "ip" fails harmlessly without privileges (the script ignores
+	// it), and the Kea binary is replaced by a marker.
+	script = strings.Replace(script, "exec "+DefaultCommandForComponent(ComponentDhcp4), "exec echo KEA-STARTED", 1)
+
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), envName+"=synthetic-pw")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "KEA-STARTED") {
+		t.Fatalf("the script exited without starting Kea:\n%s\n--- script ---\n%s", out, script)
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg, confName)); !strings.Contains(string(got), "synthetic-pw") {
+		t.Errorf("credential not substituted: %s", got)
 	}
 }
