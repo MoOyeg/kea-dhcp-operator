@@ -35,7 +35,9 @@ package resources
 //   - 3: credentials are rendered into an operator-owned configuration Secret
 //     that the pods mount; no credential env vars or startup substitution;
 //     the HA init container stops on its first failing step.
-const TemplateRevision = "3"
+//   - 4: HA pods mount revision-specific (staged) per-ordinal ConfigMaps and
+//     configuration Secrets.
+const TemplateRevision = "4"
 
 // LegacyTemplateRevision is the revision of workloads created before the
 // operator recorded one.

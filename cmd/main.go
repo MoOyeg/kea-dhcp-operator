@@ -197,6 +197,7 @@ func main() {
 
 	if err = (&controller.KeaDhcp4ServerReconciler{
 		Client:      mgr.GetClient(),
+		APIReader:   mgr.GetAPIReader(),
 		Scheme:      mgr.GetScheme(),
 		Recorder:    mgr.GetEventRecorderFor("keadhcp4server-controller"),
 		IsOpenShift: isOpenShift,

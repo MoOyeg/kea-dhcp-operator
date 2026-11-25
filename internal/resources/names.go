@@ -65,6 +65,29 @@ func HAConfigSecretName(crName, component string, ordinal int) string {
 	return fmt.Sprintf("%s-%s-config-%d", crName, component, ordinal)
 }
 
+// HAConfigMapRevisionName returns the name of one ordinal's ConfigMap for
+// one configuration revision. Each revision gets new objects, written in full
+// before the StatefulSet switches to them, so a pod (old or new) always reads
+// one complete revision.
+func HAConfigMapRevisionName(crName, component string, ordinal int, revision string) string {
+	return fmt.Sprintf("%s-%s-%d-%s", crName, component, ordinal, revision)
+}
+
+// HAConfigSecretRevisionName is HAConfigMapRevisionName for the
+// configuration Secret that holds the rendered credentials.
+func HAConfigSecretRevisionName(crName, component string, ordinal int, revision string) string {
+	return fmt.Sprintf("%s-%s-config-%d-%s", crName, component, ordinal, revision)
+}
+
+// ShortRevision returns the part of a configuration hash used in staged
+// object names.
+func ShortRevision(configHash string) string {
+	if len(configHash) > 10 {
+		return configHash[:10]
+	}
+	return configHash
+}
+
 // ConfigSecretMode is the file mode of configuration files mounted from a
 // configuration Secret: readable by the Kea and Stork agent containers' users
 // (both run as root in the shipped images) and nobody else.
