@@ -217,6 +217,11 @@ type KeaDhcp4ServerSpec struct {
 	// +optional
 	HostNetwork *bool `json:"hostNetwork,omitempty"`
 
+	// Where memfile leases are kept. Defaults to Ephemeral (an emptyDir that
+	// is removed with the pod). See LeaseStorage.
+	// +optional
+	LeaseStorage *LeaseStorage `json:"leaseStorage,omitempty"`
+
 	// ===== Kea DHCPv4 Configuration =====
 
 	// Network interface configuration. Required.

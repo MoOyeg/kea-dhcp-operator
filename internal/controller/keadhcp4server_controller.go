@@ -121,7 +121,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// 4. Render and validate the whole configuration. Nothing is written yet.
-	plan, configJSON, err := renderDhcp4(renderer, server, *replicas, haEnabled)
+	plan, configJSON, storage, err := renderDhcp4(renderer, server, *replicas, haEnabled)
 	if err != nil {
 		return r.failDhcp4Render(ctx, server, err)
 	}
@@ -131,12 +131,12 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// It runs after the credentials and the rendering above, so
 	// ModeChangeRequiresMigration is only reported for a target that passed
 	// both, and before the first write, so the serving workload is untouched.
-	conflict, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
+	reason, conflict, err := r.dhcp4WorkloadConflict(ctx, server, component, haEnabled, storage)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if conflict != "" {
-		return r.blockDhcp4ModeChange(ctx, server, conflict)
+		return r.blockDhcp4ModeChange(ctx, server, reason, conflict)
 	}
 
 	// Write the configuration. A failed write stops the reconcile before the
@@ -166,7 +166,9 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Decide what may restart the pods: a credentials rollout, and a pod
 	// template rendered by an earlier operator release, are both held back
 	// while the pods keep memfile leases in pod-local storage.
-	durable := leasesSurvivePodReplacement(server.Spec.LeaseDatabase)
+	durable := leasesDurable(server.Spec.LeaseDatabase, storage)
+	reportLeasesDurable(&server.Status.Conditions, server.Spec.LeaseDatabase, storage)
+	pp.leaseClaimName, pp.leaseClaim = storage.claimName, storage.claim
 	existing, err := getWorkload(ctx, r.Client,
 		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, haEnabled)
 	if err != nil {
@@ -230,6 +232,10 @@ type dhcp4PodParams struct {
 	templateHold templateHold
 	// existing is the current workload, or nil.
 	existing client.Object
+	// leaseClaimName (standalone) and leaseClaim (HA) put the lease file on
+	// a persistent volume; see planLeaseStorage.
+	leaseClaimName string
+	leaseClaim     *resources.LeaseClaimParams
 	// configFromSecret mounts the operator-owned configuration Secret, which
 	// holds the rendered credentials, instead of the ConfigMap.
 	configFromSecret bool
@@ -421,6 +427,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 		PeerAddresses:      peerAddresses,
 		StorkAgent:         storkAgent,
 		ConfigSecretNames:  secretNames,
+		LeaseClaim:         pp.leaseClaim,
 	}
 	sts := resources.BuildStatefulSet(sp)
 	withAppliedCredentials(sts, pp.appliedCredentials)
@@ -483,6 +490,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 		NADSubnet:          nadSubnet(server),
 		StorkAgent:         storkAgent,
 		ConfigSecretName:   configSecretName(pp.configFromSecret, server.Name, component),
+		LeaseClaimName:     pp.leaseClaimName,
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, pp.appliedCredentials)
@@ -595,13 +603,17 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 
 // renderDhcp4 renders and validates the configuration without writing it:
 // one plan per HA ordinal, or the single standalone configuration.
-func renderDhcp4(renderer *kea.Dhcp4ConfigRenderer, server *keav1alpha1.KeaDhcp4Server, replicas int32, haEnabled bool) (*haConfigPlan, []byte, error) {
+func renderDhcp4(renderer *kea.Dhcp4ConfigRenderer, server *keav1alpha1.KeaDhcp4Server, replicas int32, haEnabled bool) (*haConfigPlan, []byte, leaseStoragePlan, error) {
+	storage, err := planLeaseStorage(server.Spec.LeaseStorage, server.Spec.LeaseDatabase, haEnabled, replicas)
+	if err != nil {
+		return nil, nil, leaseStoragePlan{}, err
+	}
 	if haEnabled {
 		plan, err := planHAConfigs(renderer, server.Spec.HighAvailability, replicas)
-		return plan, nil, err
+		return plan, nil, storage, err
 	}
 	configJSON, err := renderer.RenderJSON()
-	return nil, configJSON, err
+	return nil, configJSON, storage, err
 }
 
 // writeDhcp4Configs writes the rendered configuration and returns its hash.
@@ -674,6 +686,39 @@ func (r *KeaDhcp4ServerReconciler) applyHAConfigs(
 // HA is requested, a StatefulSet when it is not) that this CR controls. It
 // returns a description of the conflict, or "" when there is none. Objects
 // with the same name that another owner controls are not this server's.
+// dhcp4WorkloadConflict reports a requested change the running workload
+// cannot take in place: a mode change (see dhcp4ModeConflict) or, for HA, a
+// change of the lease claim templates, which a StatefulSet cannot update
+// (submitting it would fail on every reconcile). It returns the condition
+// reason and message, or "" when there is no conflict.
+func (r *KeaDhcp4ServerReconciler) dhcp4WorkloadConflict(ctx context.Context, server *keav1alpha1.KeaDhcp4Server,
+	component string, haEnabled bool, storage leaseStoragePlan) (string, string, error) {
+	msg, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
+	if err != nil || msg != "" {
+		return "ModeChangeRequiresMigration", msg, err
+	}
+	if !haEnabled {
+		return "", "", nil
+	}
+	sts := &appsv1.StatefulSet{}
+	key := types.NamespacedName{Name: resources.StatefulSetName(server.Name, component), Namespace: server.Namespace}
+	if err := r.Get(ctx, key, sts); err != nil {
+		if errors.IsNotFound(err) {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("checking the StatefulSet's lease claims: %w", err)
+	}
+	if !metav1.IsControlledBy(sts, server) {
+		return "", "", nil
+	}
+	if claimTemplateSignature(sts.Spec.VolumeClaimTemplates) == desiredClaimTemplateSignature(storage) {
+		return "", "", nil
+	}
+	return "StorageChangeRequiresMigration", fmt.Sprintf("leaseStorage was changed, but StatefulSet %s cannot change its lease claims in place. "+
+		"Delete it with foreground cascading deletion to recreate it with the new storage, preserving leases as described in "+
+		"docs/ha.md (\"Preserving memfile leases\"); existing claims are retained. The running workload is left unchanged.", key.Name), nil
+}
+
 func (r *KeaDhcp4ServerReconciler) dhcp4ModeConflict(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component string, haEnabled bool) (string, error) {
 	var other client.Object = &appsv1.StatefulSet{}
 	kind, requested := "StatefulSet", "standalone"
@@ -699,8 +744,7 @@ func (r *KeaDhcp4ServerReconciler) dhcp4ModeConflict(ctx context.Context, server
 // blockDhcp4ModeChange reports a refused mode change for a target that passed
 // validation. Nothing is written or scaled, and the reconcile does not retry on its own: the next
 // spec change, or the old workload going away, triggers it again.
-func (r *KeaDhcp4ServerReconciler) blockDhcp4ModeChange(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, msg string) (ctrl.Result, error) {
-	const reason = "ModeChangeRequiresMigration"
+func (r *KeaDhcp4ServerReconciler) blockDhcp4ModeChange(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, reason, msg string) (ctrl.Result, error) {
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered",
 		"The requested configuration renders and its referenced credentials exist; it has not been started")
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", reason, msg)

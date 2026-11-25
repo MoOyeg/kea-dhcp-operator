@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -82,6 +83,17 @@ type StatefulSetParams struct {
 	// When an ordinal has one, it is mounted instead of its ConfigMap, and
 	// nothing is substituted at startup.
 	ConfigSecretNames map[int]string
+	// LeaseClaim, when set, gives each ordinal its own PersistentVolumeClaim
+	// for the memfile lease file (volumeClaimTemplates) instead of an
+	// emptyDir. The claims are retained when the StatefulSet is deleted or
+	// scaled down.
+	LeaseClaim *LeaseClaimParams
+}
+
+// LeaseClaimParams describes the per-ordinal lease claims of an HA server.
+type LeaseClaimParams struct {
+	Size             resource.Quantity
+	StorageClassName *string
 }
 
 // StatefulSetName returns the conventional StatefulSet name.
@@ -129,12 +141,9 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		{
-			Name: LeaseVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
+	}
+	if p.LeaseClaim == nil {
+		volumes = append(volumes, corev1.Volume{Name: LeaseVolumeName, VolumeSource: leaseVolumeSource("")})
 	}
 
 	// Init container volume mounts: one per ordinal + the active config target + run dir.
@@ -437,5 +446,21 @@ ip_last=$((d + ordinal + 2)); `+
 		},
 	}
 
+	if p.LeaseClaim != nil {
+		sts.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{{
+			ObjectMeta: metav1.ObjectMeta{Name: LeaseVolumeName, Labels: labels},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				StorageClassName: p.LeaseClaim.StorageClassName,
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceStorage: p.LeaseClaim.Size},
+				},
+			},
+		}}
+		sts.Spec.PersistentVolumeClaimRetentionPolicy = &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+			WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+		}
+	}
 	return sts
 }

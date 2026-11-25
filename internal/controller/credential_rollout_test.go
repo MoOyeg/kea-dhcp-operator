@@ -137,10 +137,10 @@ func stripCredentialAnnotations(t *testing.T, c client.Client, ha bool) {
 	}
 }
 
-func rotateSecret(t *testing.T, c client.Client, name, password string) {
+func rotateSecret(t *testing.T, c client.Client, password string) {
 	t.Helper()
 	s := &corev1.Secret{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: testNamespaceDefault}, s); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: testCredSecret, Namespace: testNamespaceDefault}, s); err != nil {
 		t.Fatal(err)
 	}
 	s.Data[testKeyPassword] = []byte(password)
@@ -184,7 +184,7 @@ func TestMemfileLeasesHoldCredentialRollouts(t *testing.T) {
 			}
 
 			// Rotating the hosts-database Secret is held and reported.
-			rotateSecret(t, c, testCredSecret, "rotated")
+			rotateSecret(t, c, "rotated")
 			if err := reconcileDhcp4(r); err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +226,7 @@ func TestMemfileLeasesHoldCredentialRollouts(t *testing.T) {
 
 			// A later rotation is not covered by the old approval, but a
 			// configuration change (which restarts the pods anyway) applies it.
-			rotateSecret(t, c, testCredSecret, "rotated-again")
+			rotateSecret(t, c, "rotated-again")
 			if err := reconcileDhcp4(r); err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +264,7 @@ func TestDatabaseLeasesUpgradeAdoptsWithoutRestart(t *testing.T) {
 	if _, _, after := workloadState(t, c, false); !reflect.DeepEqual(before, after) {
 		t.Fatal("upgrade changed the pod template")
 	}
-	rotateSecret(t, c, testCredSecret, "rotated")
+	rotateSecret(t, c, "rotated")
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatal(err)
 	}

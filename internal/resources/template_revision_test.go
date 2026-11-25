@@ -57,7 +57,7 @@ func templateFixtures() map[string]corev1.PodTemplateSpec {
 		two := int32(2)
 		p := StatefulSetParams{CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-			Replicas: &two, ConfigHash: "hash", ConfigMapNames: map[int]string{0: "cm-0", 1: "cm-1"},
+			Replicas: &two, ConfigHash: "hash", ConfigMapNames: map[int]string{0: testCM0, 1: testCM1},
 			PeerHostnameMap: map[string]string{"test-dhcp4-0.test-dhcp4-hl": "test-dhcp4-0.default.svc", "test-dhcp4-1.test-dhcp4-hl": "test-dhcp4-1.default.svc"},
 			StorkAgent:      s}
 		if configSecret {

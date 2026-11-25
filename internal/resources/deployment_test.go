@@ -26,6 +26,8 @@ import (
 
 const (
 	testSecretKey    = "db-password"
+	testCM0          = "cm-0"
+	testCM1          = "cm-1"
 	testConfigSecret = "test-dhcp4-config"
 	testCRName       = "test"
 	testNamespace    = "default"
