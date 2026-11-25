@@ -17,14 +17,24 @@ limitations under the License.
 package kea
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 )
 
 // testHooksDBName is the database name used by the hook tests.
-const testHooksDBName = "kea_hosts"
+const (
+	testHooksDBName    = "kea_hosts"
+	testComponentDhcp4 = "dhcp4"
+)
 
 func hookLibraries(t *testing.T, r ConfigRenderer, top string) map[string]int {
 	t.Helper()
@@ -83,6 +93,84 @@ func TestDatabaseHooksCoverEveryDatabase(t *testing.T) {
 				if got[mysqlHookLib] != tc.wantMySQL || got[pgsqlHookLib] != tc.wantPgSQL {
 					t.Errorf("%s: mysql hook x%d, pgsql hook x%d; want x%d, x%d", proto, got[mysqlHookLib], got[pgsqlHookLib], tc.wantMySQL, tc.wantPgSQL)
 				}
+			}
+		})
+	}
+}
+
+// TestDatabaseBackendsLoadedByKea starts the real Kea daemons with rendered
+// configurations whose hosts databases need the MySQL or PostgreSQL hook, and
+// checks that Kea registered those backends. `kea-dhcp4 -t` cannot catch a
+// missing hook (it never opens database backends), so the daemon is started
+// against an unreachable database: with the hook it fails to connect, without
+// it it fails with "not been compiled with support for host database type".
+// It needs podman and network access, so it only runs with KEA_CONFIG_CHECK=1
+// (KEA_IMAGE_REPO and KEA_IMAGE_TAG as for TestDDNSConfigAcceptedByKea).
+func TestDatabaseBackendsLoadedByKea(t *testing.T) {
+	if os.Getenv("KEA_CONFIG_CHECK") != "1" {
+		t.Skip("set KEA_CONFIG_CHECK=1 to start the Kea container images")
+	}
+	podman, err := exec.LookPath("podman")
+	if err != nil {
+		t.Fatal("KEA_CONFIG_CHECK=1 but podman is not installed")
+	}
+	repo, tag := os.Getenv("KEA_IMAGE_REPO"), os.Getenv("KEA_IMAGE_TAG")
+	if repo == "" {
+		repo = "docker.cloudsmith.io/isc/docker"
+	}
+	if tag == "" {
+		tag = "3.0.2"
+	}
+
+	// Nothing listens on 127.0.0.1:3399 inside the container.
+	unreachable := func(dbType keav1alpha1.DatabaseType) keav1alpha1.DatabaseConfig {
+		port, timeout, retry := int32(3399), int32(2), false
+		return keav1alpha1.DatabaseConfig{Type: dbType, Name: testHooksDBName, Host: testLoopbackIP, Port: &port,
+			ConnectTimeout: &timeout, RetryOnStartup: &retry}
+	}
+	persist := false
+	memfile := &keav1alpha1.DatabaseConfig{Type: keav1alpha1.DatabaseTypeMemfile, Persist: &persist}
+	mysql, pgsql := unreachable(keav1alpha1.DatabaseTypeMySQL), unreachable(keav1alpha1.DatabaseTypePostgreSQL)
+	iface := keav1alpha1.InterfacesConfig{Interfaces: []string{"*"}}
+
+	cases := []struct {
+		name      string
+		component string
+		renderer  ConfigRenderer
+		backend   string
+	}{
+		{"dhcp4 memfile leases, MySQL hosts", testComponentDhcp4,
+			NewDhcp4ConfigRenderer(&keav1alpha1.KeaDhcp4ServerSpec{InterfacesConfig: iface, LeaseDatabase: memfile, HostsDatabase: &mysql}), "mysql"},
+		{"dhcp4 memfile leases, PostgreSQL hosts list", testComponentDhcp4,
+			NewDhcp4ConfigRenderer(&keav1alpha1.KeaDhcp4ServerSpec{InterfacesConfig: iface, LeaseDatabase: memfile, HostsDatabases: []keav1alpha1.DatabaseConfig{pgsql}}), "postgresql"},
+		{"dhcp6 memfile leases, MySQL hosts", "dhcp6",
+			NewDhcp6ConfigRenderer(&keav1alpha1.KeaDhcp6ServerSpec{InterfacesConfig: iface, LeaseDatabase: memfile, HostsDatabase: &mysql}), "mysql"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := tc.renderer.RenderJSON()
+			if err != nil {
+				t.Fatalf("RenderJSON failed: %v", err)
+			}
+			dir := t.TempDir()
+			cfg := "kea-" + tc.component + ".conf"
+			if err := os.WriteFile(filepath.Join(dir, cfg), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, podman, "run", "--rm",
+				"--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
+				"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/kea-"+tc.component,
+				repo+"/kea-"+tc.component+":"+tag, "-c", "/cfg/"+cfg)
+			out, _ := cmd.CombinedOutput() // Kea exits with an error: the database is unreachable.
+			log := string(out)
+			if strings.Contains(log, "not been compiled with support for host database type") {
+				t.Fatalf("Kea did not load the %s hook:\n%s\n--- config ---\n%s", tc.backend, log, data)
+			}
+			registered := regexp.MustCompile(`HOSTS_BACKENDS_REGISTERED the following host backend types are available: ([a-z ]*)`).FindStringSubmatch(log)
+			if registered == nil || !strings.Contains(registered[1], tc.backend) {
+				t.Fatalf("host backend %s not registered:\n%s", tc.backend, log)
 			}
 		})
 	}
