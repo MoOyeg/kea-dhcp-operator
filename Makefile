@@ -129,6 +129,14 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
+.PHONY: sync-bundle-crds
+sync-bundle-crds: manifests ## Copy the generated CRDs into bundle/manifests without regenerating the rest of the bundle.
+	cp config/crd/bases/*.yaml bundle/manifests/
+
+.PHONY: verify-generated
+verify-generated: generate manifests ## Fail if generated code, CRDs, RBAC or bundle CRD schemas differ from the tracked files.
+	hack/verify-generated.sh
+
 ##@ Build
 
 .PHONY: build

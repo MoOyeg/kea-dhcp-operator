@@ -61,7 +61,50 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 | `readyReplicas` | Number of ready pods |
 | `configHash` | SHA-256 hash of the rendered configuration |
 | `configMapRef` | Name of the ConfigMap containing the config |
-| `conditions` | `Ready`, `ConfigurationValid`, `Progressing` |
+| `conditions` | `Ready`, `ConfigurationValid`, `Progressing`, and `Degraded` when something blocks the requested configuration |
+
+`Degraded=True` carries one of these reasons:
+
+| Reason | Meaning |
+|--------|---------|
+| `ConfigApplyError` | The configuration is valid but a ConfigMap write failed; the workload keeps the last applied configuration and the reconcile retries |
+| `ModeChangeRequiresMigration` | `high-availability` was added or removed on a running server; see [Changing between standalone and HA](ha.md#changing-between-standalone-and-ha) |
+| `CredentialsUnavailable` | A referenced credential Secret or key does not exist; the running pods are left alone until it does |
+
+### Credential Secrets and rotation
+
+Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets reach Kea through environment variables read at pod startup. The operator watches every Secret these fields reference, including ones marked `optional`, and tracks a credentials revision derived from the Secrets' names, UIDs and resource versions, never from their data. Any update to a referenced Secret counts, including a metadata-only one, and so does deleting and recreating it. An optional Secret that does not exist is allowed and tracked as absent.
+
+A new revision only reaches Kea when the pods restart, and a restart discards whatever the pods keep in pod-local storage. The operator therefore applies it as follows:
+
+| Configuration | What happens when a referenced Secret changes |
+|---------------|----------------------------------------------|
+| `lease-database` is MySQL or PostgreSQL | The pods roll once and read the new value. A standalone server restarts once. |
+| Control Agent, DDNS | The pods roll once; they keep no leases. |
+| Memfile leases (no `lease-database`, or `type: memfile`), standalone or HA | The pods are **not** restarted, because their lease files live in an `emptyDir` and a restart would let Kea hand out addresses that are still in use. The CR reports `CredentialsRolloutPending=True` naming the new revision. The pods keep the previous credentials until the next configuration change restarts them anyway, or until you approve that revision. |
+
+To apply a held revision immediately and accept losing the memfile leases, copy the revision from the condition message:
+
+```bash
+kubectl annotate kd4 <name> -n <namespace> --overwrite \
+  kea.openshift.io/approve-credential-rollout=<revision>
+```
+
+An approval covers only the revision it names; a later rotation is held again. To keep leases across the restart, export and import them as described in [Preserving memfile leases](ha.md#preserving-memfile-leases).
+
+### Operator upgrades and memfile leases
+
+An operator release can render the pod template differently, which restarts the pods. With memfile leases, standalone or HA, that restart discards the leases: during a StatefulSet rolling update the replacement peers come up seconds apart and cannot resynchronize from each other. The operator therefore keeps the existing pod template of such workloads after an upgrade and reports `RestartPending=True`, naming the new template revision. The new template is applied with the next spec or configuration change, when a database lease backend is used, or when you approve it:
+
+```bash
+kubectl annotate kd4 <name> -n <namespace> --overwrite kea.openshift.io/approve-restart=<revision>
+```
+
+Before approving, [preserve the leases](ha.md#preserving-memfile-leases) if they matter. Each workload records the template revision that rendered it in the `kea.openshift.io/template-revision` annotation on its Deployment or StatefulSet.
+
+Upgrading the operator never restarts pods to start tracking credentials: workloads created by an earlier release adopt their current revision, recorded on the Deployment or StatefulSet object, without a pod template change. A Secret rotated before the upgrade is therefore not detected until it changes again.
+
+To rotate a database password: create the new credential in the database (MySQL can keep both passwords with `RETAIN CURRENT PASSWORD`), update the Secret, wait for the pods to roll or approve the pending revision, then revoke the old credential.
 
 ---
 

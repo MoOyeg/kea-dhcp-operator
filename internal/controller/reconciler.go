@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
@@ -91,18 +92,22 @@ func buildMutateFn(owner metav1.Object, obj client.Object, scheme *runtime.Schem
 	case *appsv1.Deployment:
 		desiredSpec := *desired.Spec.DeepCopy()
 		desiredLabels := desired.Labels
+		desiredAnnotations := operatorAnnotations(desired.Annotations)
 		return func() error {
 			desired.Spec = desiredSpec
 			desired.Labels = desiredLabels
+			mergeOperatorAnnotations(desired, desiredAnnotations)
 			return controllerutil.SetControllerReference(owner, desired, scheme)
 		}
 
 	case *appsv1.StatefulSet:
 		desiredSpec := *desired.Spec.DeepCopy()
 		desiredLabels := desired.Labels
+		desiredAnnotations := operatorAnnotations(desired.Annotations)
 		return func() error {
 			desired.Spec = desiredSpec
 			desired.Labels = desiredLabels
+			mergeOperatorAnnotations(desired, desiredAnnotations)
 			return controllerutil.SetControllerReference(owner, desired, scheme)
 		}
 
@@ -465,4 +470,32 @@ func fillPeerURLs(ha *keav1alpha1.HAConfig, namespace, crName, component string,
 				stsName, i, hlSvcName, namespace, port)
 		}
 	}
+}
+
+// operatorAnnotations returns a copy of the annotations the operator owns.
+func operatorAnnotations(annotations map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range annotations {
+		if strings.HasPrefix(k, resources.OperatorAnnotationPrefix) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// mergeOperatorAnnotations sets the operator-owned object annotations and
+// leaves every other annotation (for example the Deployment revision kept by
+// Kubernetes) untouched.
+func mergeOperatorAnnotations(obj metav1.Object, owned map[string]string) {
+	if len(owned) == 0 {
+		return
+	}
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	for k, v := range owned {
+		annotations[k] = v
+	}
+	obj.SetAnnotations(annotations)
 }

@@ -652,6 +652,17 @@ const (
 	// ConditionTypeServerTokenSynced indicates the agent token Secret of a
 	// KeaStorkServer holds the token the Stork server actually accepts.
 	ConditionTypeServerTokenSynced = "ServerTokenSynced"
+
+	// ConditionTypeCredentialsRolloutPending indicates a referenced credential
+	// Secret changed but the pods were not restarted, because restarting them
+	// would discard memfile leases kept in pod-local storage.
+	ConditionTypeCredentialsRolloutPending = "CredentialsRolloutPending"
+
+	// ConditionTypeRestartPending indicates the operator renders the pods
+	// differently than the release that created them, but did not restart
+	// them, because that would discard memfile leases kept in pod-local
+	// storage.
+	ConditionTypeRestartPending = "RestartPending"
 )
 
 const (

@@ -1,0 +1,14 @@
+{
+  "revision": "2",
+  "hashes": {
+    "deployment": "8788576e28a6cd4de5a14b3be6ca61701e66acef29e46bca8c0ba74d62522733",
+    "deployment-credentials": "80c70a7f287a0d2d2a0b3cdb1d58b5ee6ea476d9558e13ca551309e041b4807a",
+    "deployment-nad": "d011f5c22435f7eb1247efbef2ccfad1de57139ac1350fbbbed1288942a707d2",
+    "deployment-nad-credentials": "d754cc59296ea01abf975500386c3d74f512fcf60e0c502c1157605b74de8dad",
+    "deployment-stork": "780a57c155beee8f0f9628e43b69193412a206b9d868e487d2eb00e8ffa0c914",
+    "statefulset": "c0941e99090afd510195a6b8e06105683872615087fb985a474b340b99b32ea5",
+    "statefulset-credentials": "206947c53ee7b44521190e60ebe0257566f30fb67bbf4bc1eeb644aea528a0dc",
+    "statefulset-nad": "5c15e74ee7e8ea9d72f70ea7f29ec3cfa1d9c9b78649f0382e01b7c3e9ef037e",
+    "statefulset-stork": "0f6dde8dbb4ebae8fc3975ff584c9cdd4a0361af12acbe8805944e5895db6b0b"
+  }
+}

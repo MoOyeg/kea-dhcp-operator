@@ -46,6 +46,34 @@ const (
 	TLSVolumeName            = "kea-tls"
 	TLSMountPath             = "/etc/kea/tls"
 	ConfigHashAnnotation     = "kea.openshift.io/config-hash"
+	// CredentialsRevisionAnnotation carries a token derived from the names,
+	// UIDs and resourceVersions of the credential Secrets a pod references
+	// (never their data), so updating one of them rolls the pods.
+	CredentialsRevisionAnnotation = "kea.openshift.io/credentials-revision"
+	// AppliedCredentialsRevisionAnnotation sits on the Deployment or
+	// StatefulSet object (not its pod template) and records the credentials
+	// revision its pods run. It lets the operator adopt running pods after an
+	// upgrade, and hold back a rollout, without changing the pod template.
+	AppliedCredentialsRevisionAnnotation = "kea.openshift.io/applied-credentials-revision"
+	// ApproveCredentialRolloutAnnotation goes on a KeaDhcp4Server or
+	// KeaDhcp6Server. Setting it to the revision a CredentialsRolloutPending
+	// condition names restarts the pods with that revision even though their
+	// memfile leases live in pod-local storage.
+	ApproveCredentialRolloutAnnotation = "kea.openshift.io/approve-credential-rollout"
+	// TemplateRevisionAnnotation sits on the Deployment or StatefulSet object
+	// and records which TemplateRevision rendered its pod template.
+	TemplateRevisionAnnotation = "kea.openshift.io/template-revision"
+	// AppliedGenerationAnnotation sits on the Deployment or StatefulSet object
+	// and records the CR generation its pod template was last rendered from.
+	AppliedGenerationAnnotation = "kea.openshift.io/applied-generation"
+	// ApproveRestartAnnotation goes on a KeaDhcp4Server or KeaDhcp6Server.
+	// Setting it to the revision a RestartPending condition names restarts
+	// pods that keep memfile leases in pod-local storage with the current
+	// operator's pod template.
+	ApproveRestartAnnotation = "kea.openshift.io/approve-restart"
+	// OperatorAnnotationPrefix is the prefix of the annotations the operator
+	// owns on the objects it manages.
+	OperatorAnnotationPrefix = "kea.openshift.io/"
 )
 
 // defaultComponentImage maps a component name to its default container image.
@@ -341,19 +369,19 @@ func buildSecretEnvSubstCommand(envVars []corev1.EnvVar, origCmd []string) []str
 		sedExpr += fmt.Sprintf(`sed -i "s|\$%s|${%s}|g" %s/*; `, ev.Name, ev.Name, ConfigMountPath)
 	}
 
-	// Build the full command: copy template -> sed substitute -> exec original command.
-	origCmdStr := ""
-	for i, arg := range origCmd {
-		if i > 0 {
-			origCmdStr += " "
-		}
-		origCmdStr += arg
+	// Build the full command: copy template -> sed substitute -> original
+	// command. An original "sh -c" script (the NAD address setup) runs inline:
+	// joining its words into "exec sh -c <script>" would pass only the
+	// script's first word to sh, which then exits without starting Kea.
+	tail := "exec " + strings.Join(origCmd, " ")
+	if len(origCmd) == 3 && origCmd[0] == "sh" && origCmd[1] == "-c" {
+		tail = origCmd[2]
 	}
 	script := fmt.Sprintf(
-		`cp %s/* %s/ && %sexec %s`,
+		`cp %s/* %s/ && %s%s`,
 		ConfigTemplateMountPath, ConfigMountPath,
 		sedExpr,
-		origCmdStr,
+		tail,
 	)
 	return []string{"sh", "-c", script}
 }

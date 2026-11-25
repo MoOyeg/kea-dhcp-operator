@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -102,54 +103,39 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// we use env var placeholders in the config and SecretKeyRef env vars
 	// on the container. The placeholders are expanded at startup.
 	renderer := kea.NewDhcp4ConfigRenderer(&server.Spec)
-	var secretEnvVars []corev1.EnvVar
+	secretEnvVars := dhcp4CredentialEnv(server, renderer)
 
-	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	for i := range server.Spec.HostsDatabases {
-		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
-			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
-			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
-			secretEnvVars = append(secretEnvVars, envs...)
-			for len(renderer.HostsDBsCreds) <= i {
-				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
-			}
-			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
-		}
+	// Resolve the referenced credential Secrets. Their revision goes on the
+	// pod template, so rotating one rolls the pods.
+	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, server, &server.Status.Conditions, &server.Status.Phase, secretEnvVars)
+	if done {
+		return ctrl.Result{}, err
 	}
 
-	// 4. Render and reconcile configuration.
-	var configHash string
+	// 4. Render and validate the whole configuration. Nothing is written yet.
+	plan, configJSON, err := renderDhcp4(renderer, server, *replicas, haEnabled)
+	if err != nil {
+		return r.failDhcp4Render(ctx, server, err)
+	}
 
-	if haEnabled {
-		// HA mode: create per-ordinal ConfigMaps with different this-server-name.
-		configHash = r.reconcileHAConfigs(ctx, renderer, server, component, labels, *replicas)
-	} else {
-		// Standard mode: single ConfigMap.
-		configJSON, err := renderer.RenderJSON()
-		if err != nil {
-			setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
-			server.Status.Phase = keav1alpha1.PhaseError
-			if statusErr := r.Status().Update(ctx, server); statusErr != nil {
-				logger.Error(statusErr, "failed to update status after config render error")
-			}
-			r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigRenderError", "Failed to render configuration: %v", err)
-			return ctrl.Result{}, fmt.Errorf("rendering config: %w", err)
-		}
-		configHash = kea.ComputeHash(configJSON)
+	// Refuse to switch between standalone and HA in place: the new workload
+	// kind would start next to the old one and both would serve the pool.
+	// It runs after the credentials and the rendering above, so
+	// ModeChangeRequiresMigration is only reported for a target that passed
+	// both, and before the first write, so the serving workload is untouched.
+	conflict, err := r.dhcp4ModeConflict(ctx, server, component, haEnabled)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if conflict != "" {
+		return r.blockDhcp4ModeChange(ctx, server, conflict)
+	}
 
-		cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
-		if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
-			return ctrl.Result{}, fmt.Errorf("reconciling ConfigMap: %w", err)
-		}
+	// Write the configuration. A failed write stops the reconcile before the
+	// workload template can point at the new revision.
+	configHash, err := r.writeDhcp4Configs(ctx, server, component, labels, plan, configJSON)
+	if err != nil {
+		return r.failDhcp4Apply(ctx, server, err)
 	}
 
 	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered", "Configuration rendered successfully")
@@ -169,6 +155,22 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 5. Extract common pod parameters.
 	pp := r.resolveDhcp4PodParams(server)
+	// Decide what may restart the pods: a credentials rollout, and a pod
+	// template rendered by an earlier operator release, are both held back
+	// while the pods keep memfile leases in pod-local storage.
+	durable := leasesSurvivePodReplacement(server.Spec.LeaseDatabase)
+	existing, err := getWorkload(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, haEnabled)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	rollout := decideCredentialRollout(existing, credRevision, configHash, durable,
+		server.Annotations[resources.ApproveCredentialRolloutAnnotation])
+	reportCredentialRollout(&server.Status.Conditions, rollout)
+	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, rollout.stamp)
+	pp.appliedCredentials = rollout.applied
+	pp.templateHold = decideTemplateHold(existing, server, durable, configHash, rollout.stamp)
+	reportRestartPending(&server.Status.Conditions, pp.templateHold)
 
 	// Resolve Stork agent sidecar params (if enabled).
 	storkAgent, err := r.resolveDhcp4StorkAgent(ctx, server)
@@ -212,6 +214,10 @@ type dhcp4PodParams struct {
 	affinity       *corev1.Affinity
 	podAnnotations map[string]string
 	tlsSecretName  string
+	// appliedCredentials is recorded on the workload object.
+	appliedCredentials string
+	// templateHold keeps an earlier release's pod template; see decideTemplateHold.
+	templateHold templateHold
 }
 
 // resolveDhcp4PodParams extracts common pod parameters from the CR spec.
@@ -396,6 +402,8 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 		SecretEnvVars:      secretEnvVars,
 	}
 	sts := resources.BuildStatefulSet(sp)
+	withAppliedCredentials(sts, pp.appliedCredentials)
+	applyTemplateHold(sts, pp.templateHold)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, sts); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling StatefulSet: %w", err)
 	}
@@ -453,6 +461,8 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, pp.appliedCredentials)
+	applyTemplateHold(deploy, pp.templateHold)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, deploy); err != nil {
 		return readyReplicas, fmt.Errorf("reconciling Deployment: %w", err)
 	}
@@ -537,6 +547,7 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	server.Status.ConfigHash = configHash
 	server.Status.ConfigMapRef = resources.ConfigMapName(server.Name, component)
 	server.Status.ObservedGeneration = server.Generation
+	clearDegraded(&server.Status.Conditions)
 
 	// Compute NAD addresses from subnet + replica count.
 	server.Status.NADAddresses = computeNADAddresses(nadSubnet(server), int(*replicas))
@@ -558,49 +569,124 @@ func (r *KeaDhcp4ServerReconciler) updateDhcp4Status(ctx context.Context, server
 	return nil
 }
 
-// reconcileHAConfigs creates per-ordinal ConfigMaps for HA mode and returns
-// a combined config hash. Each ConfigMap has the full Kea config but with a
-// different this-server-name matching the HA peer at that ordinal.
-func (r *KeaDhcp4ServerReconciler) reconcileHAConfigs(
+// renderDhcp4 renders and validates the configuration without writing it:
+// one plan per HA ordinal, or the single standalone configuration.
+func renderDhcp4(renderer *kea.Dhcp4ConfigRenderer, server *keav1alpha1.KeaDhcp4Server, replicas int32, haEnabled bool) (*haConfigPlan, []byte, error) {
+	if haEnabled {
+		plan, err := planHAConfigs(renderer, server.Spec.HighAvailability, replicas)
+		return plan, nil, err
+	}
+	configJSON, err := renderer.RenderJSON()
+	return nil, configJSON, err
+}
+
+// writeDhcp4Configs writes the rendered configuration and returns its hash.
+func (r *KeaDhcp4ServerReconciler) writeDhcp4Configs(ctx context.Context, server *keav1alpha1.KeaDhcp4Server,
+	component string, labels map[string]string, plan *haConfigPlan, configJSON []byte) (string, error) {
+	if plan != nil {
+		if err := r.applyHAConfigs(ctx, server, component, labels, plan); err != nil {
+			return "", err
+		}
+		return plan.hash, nil
+	}
+	cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
+	if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
+		return "", fmt.Errorf("writing ConfigMap: %w", err)
+	}
+	return kea.ComputeHash(configJSON), nil
+}
+
+// applyHAConfigs writes the per-ordinal ConfigMaps of a rendered plan and
+// returns the first write error. The ConfigMaps are still updated in place,
+// so a failure can leave earlier ordinals on the new configuration until the
+// retry succeeds; the caller never advances the StatefulSet in that case.
+func (r *KeaDhcp4ServerReconciler) applyHAConfigs(
 	ctx context.Context,
-	renderer *kea.Dhcp4ConfigRenderer,
 	server *keav1alpha1.KeaDhcp4Server,
 	component string,
 	labels map[string]string,
-	replicas int32,
-) string {
-	logger := log.FromContext(ctx)
-	ha := server.Spec.HighAvailability
-	var combinedHash string
-
-	for i := int32(0); i < replicas; i++ {
-		// Determine server name for this ordinal from the peers list.
-		serverName := fmt.Sprintf("server%d", i+1)
-		if int(i) < len(ha.Peers) {
-			serverName = ha.Peers[i].Name
-		}
-
-		configJSON, err := renderer.RenderJSONWithServerName(serverName)
-		if err != nil {
-			logger.Error(err, "failed to render HA config", "ordinal", i)
-			continue
-		}
-
-		combinedHash += kea.ComputeHash(configJSON)
-
-		cmName := resources.HAConfigMapName(server.Name, component, int(i))
+	plan *haConfigPlan,
+) error {
+	for i, configJSON := range plan.configs {
 		cm := &corev1.ConfigMap{
-			ObjectMeta: resources.ConfigMapMeta(cmName, server.Namespace, labels),
+			ObjectMeta: resources.ConfigMapMeta(resources.HAConfigMapName(server.Name, component, i), server.Namespace, labels),
 			Data: map[string]string{
 				resources.ConfigFileName(component): string(configJSON),
 			},
 		}
 		if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
-			logger.Error(err, "failed to reconcile HA ConfigMap", "ordinal", i)
+			return fmt.Errorf("writing HA ConfigMap for ordinal %d: %w", i, err)
 		}
 	}
+	return nil
+}
 
-	return kea.ComputeHash([]byte(combinedHash))
+// dhcp4ModeConflict reports a workload of the other kind (a Deployment when
+// HA is requested, a StatefulSet when it is not) that this CR controls. It
+// returns a description of the conflict, or "" when there is none. Objects
+// with the same name that another owner controls are not this server's.
+func (r *KeaDhcp4ServerReconciler) dhcp4ModeConflict(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, component string, haEnabled bool) (string, error) {
+	var other client.Object = &appsv1.StatefulSet{}
+	kind, requested := "StatefulSet", "standalone"
+	if haEnabled {
+		other, kind, requested = &appsv1.Deployment{}, "Deployment", "high-availability"
+	}
+	key := types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}
+	if err := r.Get(ctx, key, other); err != nil {
+		if errors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("checking for an existing %s: %w", kind, err)
+	}
+	if !metav1.IsControlledBy(other, server) {
+		return "", nil
+	}
+	return fmt.Sprintf("%s mode was requested, but %s %s from the other mode still serves this server. "+
+		"Changing between standalone and high-availability requires a maintenance migration; "+
+		"see docs/ha.md, \"Changing between standalone and HA\". The running workload is left unchanged.",
+		requested, kind, key.Name), nil
+}
+
+// blockDhcp4ModeChange reports a refused mode change for a target that passed
+// validation. Nothing is written or scaled, and the reconcile does not retry on its own: the next
+// spec change, or the old workload going away, triggers it again.
+func (r *KeaDhcp4ServerReconciler) blockDhcp4ModeChange(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, msg string) (ctrl.Result, error) {
+	const reason = "ModeChangeRequiresMigration"
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered",
+		"The requested configuration renders and its referenced credentials exist; it has not been started")
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", reason, msg)
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeReady, "False", reason, "The requested topology is not applied")
+	server.Status.Phase = keav1alpha1.PhaseError
+	if err := r.Status().Update(ctx, server); err != nil {
+		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
+	}
+	r.Recorder.Event(server, corev1.EventTypeWarning, reason, msg)
+	return ctrl.Result{}, nil
+}
+
+// failDhcp4Render records a specification that cannot be rendered and stops
+// the reconcile before anything is written.
+func (r *KeaDhcp4ServerReconciler) failDhcp4Render(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, err error) (ctrl.Result, error) {
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
+	server.Status.Phase = keav1alpha1.PhaseError
+	if statusErr := r.Status().Update(ctx, server); statusErr != nil {
+		log.FromContext(ctx).Error(statusErr, "failed to update status after config render error")
+	}
+	r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigRenderError", "Failed to render configuration: %v", err)
+	return ctrl.Result{}, fmt.Errorf("rendering config: %w", err)
+}
+
+// failDhcp4Apply records a valid configuration that could not be written.
+// status.configHash keeps the last applied revision, and the workload is not
+// touched, so nothing claims the new configuration is running.
+func (r *KeaDhcp4ServerReconciler) failDhcp4Apply(ctx context.Context, server *keav1alpha1.KeaDhcp4Server, err error) (ctrl.Result, error) {
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "True", "ConfigRendered", "Configuration rendered successfully")
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDegraded, "True", "ConfigApplyError", err.Error())
+	if statusErr := r.Status().Update(ctx, server); statusErr != nil {
+		log.FromContext(ctx).Error(statusErr, "failed to update status after config apply error")
+	}
+	r.Recorder.Eventf(server, corev1.EventTypeWarning, "ConfigApplyError", "Failed to apply configuration: %v", err)
+	return ctrl.Result{}, fmt.Errorf("applying config: %w", err)
 }
 
 // nadInterface returns the first non-standard network interface from the CR's
@@ -636,8 +722,7 @@ func (r *KeaDhcp4ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&monitoringv1.PodMonitor{}).
 		Watches(&keav1alpha1.KeaStorkServer{}, handler.EnqueueRequestsFromMapFunc(
 			enqueueStorkDependents(listStorkEnabledDhcp4, mgr.GetClient()))).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
-			enqueueOnStorkTokenSecret(listStorkEnabledDhcp4, mgr.GetClient()))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(dhcp4SecretMapFunc(mgr.GetClient()))).
 		Complete(r)
 }
 
@@ -665,4 +750,43 @@ func computeNADAddresses(subnetCIDR string, replicas int) []string {
 		addrs[i] = addr.String()
 	}
 	return addrs
+}
+
+// dhcp4CredentialEnv builds the SecretKeyRef env vars for every database that
+// references credentials and points the renderer at their placeholders.
+func dhcp4CredentialEnv(server *keav1alpha1.KeaDhcp4Server, renderer *kea.Dhcp4ConfigRenderer) []corev1.EnvVar {
+	var secretEnvVars []corev1.EnvVar
+
+	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	for i := range server.Spec.HostsDatabases {
+		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
+			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
+			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
+			secretEnvVars = append(secretEnvVars, envs...)
+			for len(renderer.HostsDBsCreds) <= i {
+				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
+			}
+			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
+		}
+	}
+	return secretEnvVars
+}
+
+// dhcp4SecretMapFunc maps a Secret event to the KeaDhcp4Servers that depend
+// on it: Stork-enabled servers for a Stork agent token Secret, and servers
+// whose database credentials reference it.
+func dhcp4SecretMapFunc(c client.Reader) handler.MapFunc {
+	return anyOf(
+		enqueueOnStorkTokenSecret(listStorkEnabledDhcp4, c),
+		enqueueReferencingCRs(c, listDhcp4SecretRefs),
+	)
 }

@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
@@ -84,6 +85,13 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 		}
 		renderer.ResolvedTSIGSecrets = placeholders
+	}
+
+	// Resolve the referenced credential Secrets. Their revision goes on the
+	// pod template, so rotating one rolls the pods.
+	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, ddns, &ddns.Status.Conditions, &ddns.Status.Phase, secretEnvVars)
+	if done {
+		return ctrl.Result{}, err
 	}
 
 	configJSON, err := renderer.RenderJSON()
@@ -143,6 +151,16 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		affinity = ddns.Spec.Placement.Affinity
 		podAnnotations = ddns.Spec.Placement.PodAnnotations
 	}
+	// No leases to lose: rotations roll automatically; an upgrade still adopts
+	// the running revision instead of restarting.
+	rollout, err := planCredentialRollout(ctx, r.Client,
+		types.NamespacedName{Name: resources.DeploymentName(ddns.Name, component), Namespace: ddns.Namespace}, &appsv1.Deployment{},
+		credRevision, configHash, true, "")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reportCredentialRollout(&ddns.Status.Conditions, rollout)
+	podAnnotations = withCredentialsRevision(podAnnotations, rollout.stamp)
 
 	dp := resources.DeploymentParams{
 		Namespace:          ddns.Namespace,
@@ -165,6 +183,7 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		SecretEnvVars:      secretEnvVars,
 	}
 	deploy := resources.BuildDeployment(dp)
+	withAppliedCredentials(deploy, rollout.applied)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, ddns, deploy); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling Deployment: %w", err)
 	}
@@ -198,6 +217,7 @@ func (r *KeaDhcpDdnsReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	ddns.Status.ConfigHash = configHash
 	ddns.Status.ConfigMapRef = resources.ConfigMapName(ddns.Name, component)
 	ddns.Status.ObservedGeneration = ddns.Generation
+	clearDegraded(&ddns.Status.Conditions)
 
 	if readyReplicas > 0 && readyReplicas == *replicas {
 		ddns.Status.Phase = keav1alpha1.PhaseRunning
@@ -227,5 +247,7 @@ func (r *KeaDhcpDdnsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+			enqueueReferencingCRs(mgr.GetClient(), listDdnsSecretRefs))).
 		Complete(r)
 }
