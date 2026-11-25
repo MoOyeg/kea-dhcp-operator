@@ -26,6 +26,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -255,6 +257,80 @@ func withAppliedCredentials(obj client.Object, applied string) {
 	mergeOperatorAnnotations(obj, map[string]string{resources.AppliedCredentialsRevisionAnnotation: applied})
 }
 
+// resolveCredentialValues reads the value behind each credential env var,
+// keyed by the "$NAME" placeholder the renderers put in the configuration.
+// A missing optional reference resolves to "", as an unset env var did.
+func resolveCredentialValues(ctx context.Context, c client.Reader, namespace string, envVars []corev1.EnvVar) (map[string]string, error) {
+	values := make(map[string]string, len(envVars))
+	secrets := map[string]*corev1.Secret{}
+	for _, ev := range envVars {
+		if ev.ValueFrom == nil || ev.ValueFrom.SecretKeyRef == nil {
+			continue
+		}
+		sel := ev.ValueFrom.SecretKeyRef
+		optional := sel.Optional != nil && *sel.Optional
+		secret, seen := secrets[sel.Name]
+		if !seen {
+			secret = &corev1.Secret{}
+			if err := c.Get(ctx, types.NamespacedName{Name: sel.Name, Namespace: namespace}, secret); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return nil, fmt.Errorf("reading credential Secret %q: %w", sel.Name, err)
+				}
+				secret = nil
+			}
+			secrets[sel.Name] = secret
+		}
+		var value []byte
+		if secret != nil {
+			value = secret.Data[sel.Key]
+		}
+		if value == nil && !optional {
+			return nil, fmt.Errorf("%w: Secret %q has no key %q", errCredentialsUnavailable, sel.Name, sel.Key)
+		}
+		values["$"+ev.Name] = string(value)
+	}
+	return values, nil
+}
+
+// credentialValuesIfAny resolves the credential values when the env vars
+// reference any; it returns nil when there are none, which means the
+// component keeps mounting its ConfigMap.
+func credentialValuesIfAny(ctx context.Context, c client.Reader, namespace string, envVars []corev1.EnvVar) (map[string]string, error) {
+	if len(envVars) == 0 {
+		return nil, nil
+	}
+	return resolveCredentialValues(ctx, c, namespace, envVars)
+}
+
+// configSecretName returns the configuration Secret name to mount, or "" to
+// mount the ConfigMap.
+func configSecretName(fromSecret bool, crName, component string) string {
+	if !fromSecret {
+		return ""
+	}
+	return resources.ConfigSecretName(crName, component)
+}
+
+// writeConfigSecret renders the credentials into a placeholder configuration
+// and stores the result in an operator-owned Secret, which the pods mount
+// instead of the ConfigMap. Errors never include configuration text.
+func writeConfigSecret(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner metav1.Object,
+	name, fileName string, placeholderJSON []byte, values map[string]string, labels map[string]string) error {
+	resolved, err := kea.SubstituteCredentials(placeholderJSON, values)
+	if err != nil {
+		return err
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace(), Labels: labels},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{fileName: resolved},
+	}
+	if err := reconcileResource(ctx, c, scheme, owner, secret); err != nil {
+		return fmt.Errorf("writing configuration Secret %s: %w", name, err)
+	}
+	return nil
+}
+
 // markCredentialsUnavailable records a missing credential. The caller writes
 // the status and stops before touching the workload, so a running server
 // keeps its current pods; the Secret watch reconciles again once the Secret
@@ -403,6 +479,19 @@ func listDdnsSecretRefs(ctx context.Context, c client.Reader, namespace string) 
 		out[client.ObjectKeyFromObject(&list.Items[i])] = ddnsSecretNames(&list.Items[i])
 	}
 	return out
+}
+
+// enqueueControllingCR returns a handler.MapFunc that enqueues the CR of the
+// given kind controlling an object, such as the operator-owned configuration
+// Secret, so an edited or deleted Secret is put back.
+func enqueueControllingCR(kind string) handler.MapFunc {
+	return func(_ context.Context, obj client.Object) []ctrl.Request {
+		owner := metav1.GetControllerOf(obj)
+		if owner == nil || owner.Kind != kind || owner.APIVersion != keav1alpha1.GroupVersion.String() {
+			return nil
+		}
+		return []ctrl.Request{{NamespacedName: types.NamespacedName{Name: owner.Name, Namespace: obj.GetNamespace()}}}
+	}
 }
 
 // anyOf combines map functions, dropping duplicate requests.

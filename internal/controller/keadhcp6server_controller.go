@@ -49,7 +49,7 @@ type KeaDhcp6ServerReconciler struct {
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keadhcp6servers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keadhcp6servers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -86,34 +86,16 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 3. Build env var references for database credentials.
 	renderer := kea.NewDhcp6ConfigRenderer(&server.Spec)
-	var secretEnvVars []corev1.EnvVar
-
-	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
-		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
-		secretEnvVars = append(secretEnvVars, envs...)
-		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
-	}
-	for i := range server.Spec.HostsDatabases {
-		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
-			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
-			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
-			secretEnvVars = append(secretEnvVars, envs...)
-			for len(renderer.HostsDBsCreds) <= i {
-				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
-			}
-			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
-		}
-	}
+	secretEnvVars := dhcp6CredentialEnv(server, renderer)
 
 	// Resolve the referenced credential Secrets. Their revision goes on the
 	// pod template, so rotating one rolls the pods.
 	credRevision, done, err := credentialsGate(ctx, r.Client, r.Recorder, server, &server.Status.Conditions, &server.Status.Phase, secretEnvVars)
 	if done {
+		return ctrl.Result{}, err
+	}
+	credValues, err := credentialValuesIfAny(ctx, r.Client, server.Namespace, secretEnvVars)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -139,6 +121,14 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling ConfigMap: %w", err)
+	}
+	// The ConfigMap keeps the placeholder configuration; with credentials,
+	// the pods mount an operator-owned Secret with them rendered in.
+	if credValues != nil {
+		if err := writeConfigSecret(ctx, r.Client, r.Scheme, server, resources.ConfigSecretName(server.Name, component),
+			resources.ConfigFileName(component), configJSON, credValues, labels); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 5. Reconcile ServiceAccount.
@@ -202,7 +192,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		ImagePullSecrets:   server.Spec.Container.ImagePullSecrets,
 		PodAnnotations:     pp.podAnnotations,
 		StorkAgent:         storkAgent,
-		SecretEnvVars:      secretEnvVars,
+		ConfigSecretName:   configSecretName(credValues != nil, server.Name, component),
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, rollout.applied)
@@ -407,6 +397,36 @@ func (r *KeaDhcp6ServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			enqueueStorkDependents(listStorkEnabledDhcp6, mgr.GetClient()))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(anyOf(
 			enqueueOnStorkTokenSecret(listStorkEnabledDhcp6, mgr.GetClient()),
-			enqueueReferencingCRs(mgr.GetClient(), listDhcp6SecretRefs)))).
+			enqueueReferencingCRs(mgr.GetClient(), listDhcp6SecretRefs),
+			enqueueControllingCR("KeaDhcp6Server")))).
 		Complete(r)
+}
+
+// dhcp6CredentialEnv builds the SecretKeyRef env vars for every database that
+// references credentials and points the renderer at their placeholders.
+func dhcp6CredentialEnv(server *keav1alpha1.KeaDhcp6Server, renderer *kea.Dhcp6ConfigRenderer) []corev1.EnvVar {
+	var secretEnvVars []corev1.EnvVar
+
+	if server.Spec.LeaseDatabase != nil && server.Spec.LeaseDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_LEASE_DB", server.Spec.LeaseDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.LeaseDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	if server.Spec.HostsDatabase != nil && server.Spec.HostsDatabase.CredentialsSecretRef != nil {
+		envs, userPh, passPh := dbCredentialEnvVars("KEA_HOSTS_DB", server.Spec.HostsDatabase)
+		secretEnvVars = append(secretEnvVars, envs...)
+		renderer.HostsDBCreds = kea.DBCredentials{User: userPh, Password: passPh}
+	}
+	for i := range server.Spec.HostsDatabases {
+		if server.Spec.HostsDatabases[i].CredentialsSecretRef != nil {
+			prefix := fmt.Sprintf("KEA_HOSTS_DBS_%d", i)
+			envs, userPh, passPh := dbCredentialEnvVars(prefix, &server.Spec.HostsDatabases[i])
+			secretEnvVars = append(secretEnvVars, envs...)
+			for len(renderer.HostsDBsCreds) <= i {
+				renderer.HostsDBsCreds = append(renderer.HostsDBsCreds, kea.DBCredentials{})
+			}
+			renderer.HostsDBsCreds[i] = kea.DBCredentials{User: userPh, Password: passPh}
+		}
+	}
+	return secretEnvVars
 }

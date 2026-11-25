@@ -53,6 +53,23 @@ func ConfigMapName(crName, component string) string {
 	return fmt.Sprintf("%s-%s", crName, component)
 }
 
+// ConfigSecretName returns the name of the operator-owned Secret that holds
+// the configuration of a component whose credentials are rendered into it.
+func ConfigSecretName(crName, component string) string {
+	return fmt.Sprintf("%s-%s-config", crName, component)
+}
+
+// HAConfigSecretName returns the per-ordinal configuration Secret name of an
+// HA component whose credentials are rendered into its configuration.
+func HAConfigSecretName(crName, component string, ordinal int) string {
+	return fmt.Sprintf("%s-%s-config-%d", crName, component, ordinal)
+}
+
+// ConfigSecretMode is the file mode of configuration files mounted from a
+// configuration Secret: readable by the Kea and Stork agent containers' users
+// (both run as root in the shipped images) and nobody else.
+const ConfigSecretMode int32 = 0o440
+
 // DeploymentName returns the conventional Deployment name for a given CR and component.
 func DeploymentName(crName, component string) string {
 	return fmt.Sprintf("%s-%s", crName, component)

@@ -35,17 +35,15 @@ const (
 
 // Volume/mount constants for Kea deployments.
 const (
-	ConfigVolumeName         = "kea-config"
-	ConfigMountPath          = "/etc/kea"
-	ConfigTemplateMountPath  = "/etc/kea-template"
-	ConfigWritableVolumeName = "kea-config-rendered"
-	RunVolumeName            = "kea-run"
-	RunMountPath             = "/var/run/kea"
-	LeaseVolumeName          = "kea-leases"
-	LeaseMountPath           = "/var/lib/kea"
-	TLSVolumeName            = "kea-tls"
-	TLSMountPath             = "/etc/kea/tls"
-	ConfigHashAnnotation     = "kea.openshift.io/config-hash"
+	ConfigVolumeName     = "kea-config"
+	ConfigMountPath      = "/etc/kea"
+	RunVolumeName        = "kea-run"
+	RunMountPath         = "/var/run/kea"
+	LeaseVolumeName      = "kea-leases"
+	LeaseMountPath       = "/var/lib/kea"
+	TLSVolumeName        = "kea-tls"
+	TLSMountPath         = "/etc/kea/tls"
+	ConfigHashAnnotation = "kea.openshift.io/config-hash"
 	// CredentialsRevisionAnnotation carries a token derived from the names,
 	// UIDs and resourceVersions of the credential Secrets a pod references
 	// (never their data), so updating one of them rolls the pods.
@@ -137,10 +135,10 @@ type DeploymentParams struct {
 	NADSubnet string
 	// StorkAgent holds resolved stork-agent sidecar params. Nil means no sidecar.
 	StorkAgent *StorkSidecarParams
-	// SecretEnvVars are environment variables sourced from Secrets (via ValueFrom.SecretKeyRef).
-	// The Kea config uses env var placeholders (e.g., $KEA_LEASE_DB_PASSWORD) that are expanded
-	// at container startup via envsubst before Kea reads the config.
-	SecretEnvVars []corev1.EnvVar
+	// ConfigSecretName, when set, names an operator-owned Secret holding the
+	// configuration with its credentials already rendered in. It is mounted
+	// instead of ConfigMapName, so nothing is substituted at startup.
+	ConfigSecretName string
 }
 
 // BuildDeployment constructs a Kubernetes Deployment for a Kea component based
@@ -153,27 +151,22 @@ func BuildDeployment(p DeploymentParams) *appsv1.Deployment {
 		image = DefaultImageForComponent(p.Component)
 	}
 
-	hasSecretEnvVars := len(p.SecretEnvVars) > 0
-
-	// Volumes: config (from ConfigMap), run (emptyDir), leases (emptyDir).
-	// When secret env vars are present, the ConfigMap mounts at a template path
-	// and a writable emptyDir is used at the actual config path.
-	configVolumeMountPath := ConfigMountPath
-	if hasSecretEnvVars {
-		configVolumeMountPath = ConfigTemplateMountPath
+	// Volumes: config (a ConfigMap, or the configuration Secret when
+	// credentials are rendered in), run (emptyDir), leases (emptyDir).
+	configSource := corev1.VolumeSource{
+		ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: p.ConfigMapName},
+		},
+	}
+	if p.ConfigSecretName != "" {
+		mode := ConfigSecretMode
+		configSource = corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: p.ConfigSecretName, DefaultMode: &mode},
+		}
 	}
 
 	volumes := []corev1.Volume{
-		{
-			Name: ConfigVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: p.ConfigMapName,
-					},
-				},
-			},
-		},
+		{Name: ConfigVolumeName, VolumeSource: configSource},
 		{
 			Name: RunVolumeName,
 			VolumeSource: corev1.VolumeSource{
@@ -192,7 +185,7 @@ func BuildDeployment(p DeploymentParams) *appsv1.Deployment {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      ConfigVolumeName,
-			MountPath: configVolumeMountPath,
+			MountPath: ConfigMountPath,
 			ReadOnly:  true,
 		},
 		{
@@ -203,21 +196,6 @@ func BuildDeployment(p DeploymentParams) *appsv1.Deployment {
 			Name:      LeaseVolumeName,
 			MountPath: LeaseMountPath,
 		},
-	}
-
-	// When secrets are referenced via env vars, add a writable volume for the
-	// rendered config (env var placeholders are expanded at startup).
-	if hasSecretEnvVars {
-		volumes = append(volumes, corev1.Volume{
-			Name: ConfigWritableVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      ConfigWritableVolumeName,
-			MountPath: ConfigMountPath,
-		})
 	}
 
 	// Optional TLS secret volume.
@@ -277,11 +255,6 @@ ip_last=$((d + 2)); `+
 		)}
 	}
 
-	// When secret env vars are present, wrap the command to expand placeholders.
-	if hasSecretEnvVars {
-		mainCmd = buildSecretEnvSubstCommand(p.SecretEnvVars, mainCmd)
-	}
-
 	// Kea 3.0 rejects a world-writable control-socket directory, and a fresh
 	// emptyDir is 0777. The StatefulSet path fixes this in its init container;
 	// the Deployment has none, so tighten the permissions before exec'ing Kea.
@@ -292,7 +265,6 @@ ip_last=$((d + 2)); `+
 		Image:           image,
 		ImagePullPolicy: p.ImagePullPolicy,
 		Command:         mainCmd,
-		Env:             p.SecretEnvVars,
 		Resources:       p.Resources,
 		VolumeMounts:    volumeMounts,
 		SecurityContext: securityContext,
@@ -353,35 +325,4 @@ func withRunDirPermissions(cmd []string) []string {
 		return []string{"sh", "-c", chmod + cmd[2]}
 	}
 	return []string{"sh", "-c", chmod + "exec " + strings.Join(cmd, " ")}
-}
-
-// buildSecretEnvSubstCommand builds a shell command that:
-// 1. Copies the config template to a writable volume
-// 2. Substitutes env var placeholders using sed
-// 3. Execs the original command
-// The env var names (e.g., KEA_LEASE_DB_PASSWORD) are expanded via ${VAR} in sed.
-func buildSecretEnvSubstCommand(envVars []corev1.EnvVar, origCmd []string) []string {
-	// Build sed expressions for each env var placeholder.
-	sedExpr := ""
-	for _, ev := range envVars {
-		// Replace literal $VAR_NAME in the config with the env var value.
-		// Use | as sed delimiter to avoid conflicts with base64/URL characters.
-		sedExpr += fmt.Sprintf(`sed -i "s|\$%s|${%s}|g" %s/*; `, ev.Name, ev.Name, ConfigMountPath)
-	}
-
-	// Build the full command: copy template -> sed substitute -> original
-	// command. An original "sh -c" script (the NAD address setup) runs inline:
-	// joining its words into "exec sh -c <script>" would pass only the
-	// script's first word to sh, which then exits without starting Kea.
-	tail := "exec " + strings.Join(origCmd, " ")
-	if len(origCmd) == 3 && origCmd[0] == "sh" && origCmd[1] == "-c" {
-		tail = origCmd[2]
-	}
-	script := fmt.Sprintf(
-		`cp %s/* %s/ && %s%s`,
-		ConfigTemplateMountPath, ConfigMountPath,
-		sedExpr,
-		tail,
-	)
-	return []string{"sh", "-c", script}
 }

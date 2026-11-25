@@ -17,9 +17,7 @@ limitations under the License.
 package resources
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,11 +25,12 @@ import (
 )
 
 const (
-	testSecretKey = "db-password"
-	testCRName    = "test"
-	testNamespace = "default"
-	testNADSubnet = "10.200.0.0/24"
-	testNADIface  = "net1"
+	testSecretKey    = "db-password"
+	testConfigSecret = "test-dhcp4-config"
+	testCRName       = "test"
+	testNamespace    = "default"
+	testNADSubnet    = "10.200.0.0/24"
+	testNADIface     = "net1"
 )
 
 func TestBuildDeploymentDefaultImages(t *testing.T) {
@@ -105,21 +104,13 @@ func TestDefaultImageForComponent(t *testing.T) {
 func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 	chmod := "chmod 750 " + RunMountPath + "; "
 	dhcp4Exec := "exec /usr/sbin/kea-dhcp4 -c /etc/kea/kea-dhcp4.conf"
-	secretEnv := []corev1.EnvVar{{
-		Name: "KEA_LEASE_DB_PASSWORD",
-		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: "db"},
-			Key:                  testSecretKey,
-		}},
-	}}
-
 	tests := []struct {
-		name       string
-		component  string
-		nadIface   string
-		nadSubnet  string
-		secretEnv  []corev1.EnvVar
-		wantSuffix string
+		name         string
+		component    string
+		nadIface     string
+		nadSubnet    string
+		configSecret string
+		wantSuffix   string
 	}{
 		{name: "dhcp4 plain", component: ComponentDhcp4,
 			wantSuffix: dhcp4Exec},
@@ -131,24 +122,24 @@ func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 			wantSuffix: "exec /usr/sbin/kea-dhcp-ddns -c /etc/kea/kea-ddns.conf"},
 		{name: "dhcp4 with NAD", component: ComponentDhcp4, nadIface: testNADIface, nadSubnet: testNADSubnet,
 			wantSuffix: dhcp4Exec},
-		{name: "dhcp4 with secret env vars", component: ComponentDhcp4, secretEnv: secretEnv,
+		{name: "dhcp4 with a configuration Secret", component: ComponentDhcp4, configSecret: testConfigSecret,
 			wantSuffix: dhcp4Exec},
-		{name: "dhcp4 with NAD and secret env vars", component: ComponentDhcp4,
-			nadIface: testNADIface, nadSubnet: testNADSubnet, secretEnv: secretEnv,
-			wantSuffix: "/etc/kea/kea-dhcp4.conf"},
+		{name: "dhcp4 with NAD and a configuration Secret", component: ComponentDhcp4,
+			nadIface: testNADIface, nadSubnet: testNADSubnet, configSecret: testConfigSecret,
+			wantSuffix: dhcp4Exec},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			deploy := BuildDeployment(DeploymentParams{
-				CRName:         testCRName,
-				Namespace:      testNamespace,
-				Component:      tc.component,
-				Command:        DefaultCommandForComponent(tc.component),
-				ConfigFileName: "kea-" + tc.component + ".conf",
-				ConfigMapName:  "test-" + tc.component,
-				NADInterface:   tc.nadIface,
-				NADSubnet:      tc.nadSubnet,
-				SecretEnvVars:  tc.secretEnv,
+				CRName:           testCRName,
+				Namespace:        testNamespace,
+				Component:        tc.component,
+				Command:          DefaultCommandForComponent(tc.component),
+				ConfigFileName:   "kea-" + tc.component + ".conf",
+				ConfigMapName:    "test-" + tc.component,
+				NADInterface:     tc.nadIface,
+				NADSubnet:        tc.nadSubnet,
+				ConfigSecretName: tc.configSecret,
 			})
 			cmd := deploy.Spec.Template.Spec.Containers[0].Command
 			if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" {
@@ -167,124 +158,77 @@ func TestBuildDeploymentRunDirPermissions(t *testing.T) {
 	}
 }
 
-// TestSecretEnvSubstScriptSubstitutesConfFile runs the generated startup
-// script against a temp copy of the config layout and checks that the env var
-// placeholder is really replaced in the "kea-*.conf" file. The config files
-// are named "*.conf", so a "*.json" glob matched nothing and silently left the
-// placeholder in place.
-func TestSecretEnvSubstScriptSubstitutesConfFile(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	secretEnv := []corev1.EnvVar{{
-		Name: "KEA_TSIG_SECRET_0",
-		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: "tsig"},
-			Key:                  "secret",
-		}},
-	}}
+// With credentials rendered into a configuration Secret, the Deployment
+// mounts that Secret where the ConfigMap would go and does nothing at startup:
+// no credential env vars, no template copy, no sed. The Stork sidecar reads
+// the same volume.
+func TestDeploymentMountsConfigSecret(t *testing.T) {
+	stork := &StorkSidecarParams{Image: testStorkAgentImage, Port: 8080, PrometheusPort: 9547}
 	deploy := BuildDeployment(DeploymentParams{
-		CRName:         testCRName,
-		Namespace:      testNamespace,
-		Component:      ComponentDdns,
-		Command:        DefaultCommandForComponent(ComponentDdns),
-		ConfigFileName: ConfigFileName(ComponentDdns),
-		ConfigMapName:  "test-ddns",
-		SecretEnvVars:  secretEnv,
+		CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+		Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+		ConfigMapName: testDeployConfigMap, ConfigSecretName: testConfigSecret, StorkAgent: stork,
 	})
-	script := deploy.Spec.Template.Spec.Containers[0].Command[2]
-	if strings.Contains(script, "*.json") {
-		t.Fatalf("script still targets *.json (config files are *.conf): %q", script)
-	}
+	spec := deploy.Spec.Template.Spec
 
-	// Lay out template + writable dirs under a temp root and point the script at them.
-	root := t.TempDir()
-	tmpl := filepath.Join(root, "template")
-	cfg := filepath.Join(root, "config")
-	run := filepath.Join(root, "run")
-	for _, d := range []string{tmpl, cfg, run} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
+	var source *corev1.SecretVolumeSource
+	for _, v := range spec.Volumes {
+		if v.Name == ConfigVolumeName {
+			source = v.Secret
+			if v.ConfigMap != nil {
+				t.Error("configuration volume still uses the ConfigMap")
+			}
 		}
 	}
-	confName := ConfigFileName(ComponentDdns)
-	if err := os.WriteFile(filepath.Join(tmpl, confName), []byte(`{"secret": "$KEA_TSIG_SECRET_0"}`), 0o644); err != nil {
-		t.Fatal(err)
+	if source == nil || source.SecretName != testConfigSecret {
+		t.Fatalf("configuration volume is not the Secret %q: %+v", testConfigSecret, spec.Volumes)
 	}
-	script = strings.ReplaceAll(script, ConfigTemplateMountPath, tmpl)
-	script = strings.ReplaceAll(script, RunMountPath, run)
-	script = strings.ReplaceAll(script, ConfigMountPath, cfg)
-	// Don't exec the real Kea binary; the substitution is what is under test.
-	script = strings.Replace(script, "exec "+DefaultCommandForComponent(ComponentDdns), "exec true", 1)
+	if source.DefaultMode == nil || *source.DefaultMode != ConfigSecretMode {
+		t.Errorf("configuration Secret mode = %v, want %o", source.DefaultMode, ConfigSecretMode)
+	}
 
-	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = append(os.Environ(), "KEA_TSIG_SECRET_0=c2VjcmV0Cg==")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	got, err := os.ReadFile(filepath.Join(cfg, confName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := `{"secret": "c2VjcmV0Cg=="}`; string(got) != want {
-		t.Errorf("placeholder not substituted: got %q, want %q", got, want)
+	for _, c := range append(spec.InitContainers, spec.Containers...) {
+		for _, ev := range c.Env {
+			if ev.ValueFrom != nil && ev.ValueFrom.SecretKeyRef != nil {
+				t.Errorf("container %s still takes credential %s from an env var", c.Name, ev.Name)
+			}
+		}
+		script := strings.Join(c.Command, " ")
+		for _, forbidden := range []string{"sed ", "cp /etc/kea"} {
+			if strings.Contains(script, forbidden) {
+				t.Errorf("container %s still rewrites its configuration at startup: %q", c.Name, script)
+			}
+		}
+		mounted := false
+		for _, m := range c.VolumeMounts {
+			if m.Name == ConfigVolumeName && m.MountPath == ConfigMountPath && m.ReadOnly {
+				mounted = true
+			}
+		}
+		if !mounted {
+			t.Errorf("container %s does not mount the configuration read-only at %s", c.Name, ConfigMountPath)
+		}
 	}
 }
 
-// With a NAD the container command is already an "sh -c" script. The
-// credential wrapper used to append it unquoted ("exec sh -c IFS='./' read
-// ..."), so sh only ran "IFS=./", exited 0 and Kea never started. Run the
-// generated script and require that it gets as far as starting Kea.
-func TestSecretEnvSubstScriptWithNADReachesKea(t *testing.T) {
+// The NAD setup script must still run to the Kea exec when the configuration
+// comes from a Secret (a NAD with credentials used to never start Kea).
+func TestDeploymentNADScriptWithConfigSecretReachesKea(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
-	const envName = "KEA_LEASE_DB_PASSWORD"
 	deploy := BuildDeployment(DeploymentParams{
-		CRName:         testCRName,
-		Namespace:      testNamespace,
-		Component:      ComponentDhcp4,
-		Command:        DefaultCommandForComponent(ComponentDhcp4),
-		ConfigFileName: ConfigFileName(ComponentDhcp4),
-		ConfigMapName:  "test-dhcp4",
-		NADInterface:   testNADIface,
-		NADSubnet:      testNADSubnet,
-		SecretEnvVars: []corev1.EnvVar{{
-			Name: envName,
-			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: "db"}, Key: testSecretKey}},
-		}},
+		CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
+		Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
+		ConfigMapName: testDeployConfigMap, ConfigSecretName: testConfigSecret,
+		NADInterface: testNADIface, NADSubnet: testNADSubnet,
 	})
 	script := deploy.Spec.Template.Spec.Containers[0].Command[2]
-
-	root := t.TempDir()
-	tmpl, cfg, run := filepath.Join(root, "template"), filepath.Join(root, "config"), filepath.Join(root, "run")
-	for _, d := range []string{tmpl, cfg, run} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	confName := ConfigFileName(ComponentDhcp4)
-	if err := os.WriteFile(filepath.Join(tmpl, confName), []byte(`{"password": "$`+envName+`"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	script = strings.ReplaceAll(script, ConfigTemplateMountPath, tmpl)
+	run := t.TempDir()
 	script = strings.ReplaceAll(script, RunMountPath, run)
-	script = strings.ReplaceAll(script, ConfigMountPath, cfg)
-	// Stand-ins: "ip" fails harmlessly without privileges (the script ignores
-	// it), and the Kea binary is replaced by a marker.
 	script = strings.Replace(script, "exec "+DefaultCommandForComponent(ComponentDhcp4), "exec echo KEA-STARTED", 1)
-
-	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = append(os.Environ(), envName+"=synthetic-pw")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "KEA-STARTED") {
-		t.Fatalf("the script exited without starting Kea:\n%s\n--- script ---\n%s", out, script)
-	}
-	if got, _ := os.ReadFile(filepath.Join(cfg, confName)); !strings.Contains(string(got), "synthetic-pw") {
-		t.Errorf("credential not substituted: %s", got)
+	out, err := exec.Command("sh", "-c", script).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "KEA-STARTED") {
+		t.Fatalf("script did not reach the Kea exec (err %v):\n%s\n--- script ---\n%s", err, out, script)
 	}
 }

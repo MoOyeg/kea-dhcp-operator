@@ -374,7 +374,7 @@ The release grouping ships each step's urgent, low-risk part first. Every PR kee
 | 1 | C | Guard standalone/HA mode changes and document the maintenance migration | Both directions and the already-both-active case set `ModeChangeRequiresMigration` and keep the serving workload |
 | 1 | F1 | Watch referenced credential Secrets and roll pods through a non-secret revision token | Token changes on update and recreation, stays stable otherwise; missing Secret or key sets a dependency condition; a real watch enqueues only referencing CRs |
 | 1 | H1 | Fast CI: Go validation, generated-artifact and bundle-CRD drift, Kea parser check that fails instead of skipping when requested | Jobs pass on the release branch |
-| 2 | A2 | Render credentials into an operator-owned Secret; remove runtime substitution | Step 1 test table |
+| 2 | A2 | Render credentials into an operator-owned Secret; remove runtime substitution | Step 1 test table. Implemented (TemplateRevision 3): `kea.SubstituteCredentials`, configuration Secrets for DHCPv4 (standalone and HA), DHCPv6, Control Agent and DDNS, no credential env vars or `sed`, `set -e` in the HA init container |
 | 2 | B2 | Stage revision-specific ConfigMaps; status distinguishes desired and applied revisions | Step 2 test table |
 | 2 | D | Durable storage API and lifecycle | Step 5 test table |
 | 3 | E | Managed DHCPv6 HA using shared orchestration | Step 4 test table |

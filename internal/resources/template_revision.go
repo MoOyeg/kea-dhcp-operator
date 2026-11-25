@@ -32,7 +32,10 @@ package resources
 //   - 1: v0.0.35 and earlier (workloads carry no revision annotation).
 //   - 2: the HA init container no longer prints the configuration; a
 //     standalone server with a NAD and credentials runs the NAD setup inline.
-const TemplateRevision = "2"
+//   - 3: credentials are rendered into an operator-owned configuration Secret
+//     that the pods mount; no credential env vars or startup substitution;
+//     the HA init container stops on its first failing step.
+const TemplateRevision = "3"
 
 // LegacyTemplateRevision is the revision of workloads created before the
 // operator recorded one.

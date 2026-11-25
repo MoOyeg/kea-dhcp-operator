@@ -19,6 +19,7 @@ package kea
 // Shared string literals used across the kea package tests. Declared here so
 // individual test files can reference them without repeating literals (goconst).
 const (
+	testPool4Range       = "192.0.2.10 - 192.0.2.100"
 	testSubnet4CIDR      = "192.0.2.0/24"
 	testSubnet6Prefix    = "2001:db8:1::/64"
 	testPool6Range       = "2001:db8:1::100 - 2001:db8:1::1ff"
