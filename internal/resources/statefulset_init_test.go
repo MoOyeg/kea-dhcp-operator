@@ -71,7 +71,7 @@ func haStatefulSet() *appsv1.StatefulSet {
 	return BuildStatefulSet(StatefulSetParams{
 		Namespace: testNamespace, CRName: testCRName, Component: ComponentDhcp4,
 		Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-		ConfigMapNames: map[int]string{0: "cm-0", 1: "cm-1"}, ConfigFromSecrets: true,
+		ConfigMapNames: map[int]string{0: "cm-0", 1: "cm-1"}, ConfigSecretNames: map[int]string{0: HAConfigSecretName(testCRName, ComponentDhcp4, 0), 1: HAConfigSecretName(testCRName, ComponentDhcp4, 1)},
 	})
 }
 

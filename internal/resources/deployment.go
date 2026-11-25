@@ -69,6 +69,14 @@ const (
 	// pods that keep memfile leases in pod-local storage with the current
 	// operator's pod template.
 	ApproveRestartAnnotation = "kea.openshift.io/approve-restart"
+	// ConfigRevisionLabel marks a staged per-ordinal ConfigMap or Secret with
+	// the configuration revision it belongs to.
+	ConfigRevisionLabel = "kea.openshift.io/config-revision"
+	// ConfigRevisionAnnotation and PreviousConfigRevisionAnnotation sit on an
+	// HA StatefulSet and record the revision its template references and the
+	// one before it, which is kept for rollback.
+	ConfigRevisionAnnotation         = "kea.openshift.io/config-revision"
+	PreviousConfigRevisionAnnotation = "kea.openshift.io/previous-config-revision"
 	// OperatorAnnotationPrefix is the prefix of the annotations the operator
 	// owns on the objects it manages.
 	OperatorAnnotationPrefix = "kea.openshift.io/"

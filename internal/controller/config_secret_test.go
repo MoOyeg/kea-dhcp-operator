@@ -59,9 +59,11 @@ func TestDhcp4HAConfigSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	hash, _ := statefulSetHash(t, c)
+	rev := resources.ShortRevision(hash)
 	for i := 0; i < 2; i++ {
 		secret := &corev1.Secret{}
-		if err := c.Get(ctx, types.NamespacedName{Name: resources.HAConfigSecretName(testDhcp4CR, testComponent4, i), Namespace: testNamespaceDefault}, secret); err != nil {
+		if err := c.Get(ctx, types.NamespacedName{Name: resources.HAConfigSecretRevisionName(testDhcp4CR, testComponent4, i, rev), Namespace: testNamespaceDefault}, secret); err != nil {
 			t.Fatalf("ordinal %d configuration Secret: %v", i, err)
 		}
 		cfg := secret.Data[resources.ConfigFileName(testComponent4)]
@@ -72,7 +74,7 @@ func TestDhcp4HAConfigSecrets(t *testing.T) {
 			t.Errorf("ordinal %d Secret holds another ordinal's configuration", i)
 		}
 		cm := &corev1.ConfigMap{}
-		if err := c.Get(ctx, types.NamespacedName{Name: resources.HAConfigMapName(testDhcp4CR, testComponent4, i), Namespace: testNamespaceDefault}, cm); err != nil {
+		if err := c.Get(ctx, types.NamespacedName{Name: resources.HAConfigMapRevisionName(testDhcp4CR, testComponent4, i, rev), Namespace: testNamespaceDefault}, cm); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(cm.Data[resources.ConfigFileName(testComponent4)], "a&b|c") {
@@ -85,7 +87,7 @@ func TestDhcp4HAConfigSecrets(t *testing.T) {
 	}
 	secretVolumes := 0
 	for _, v := range sts.Spec.Template.Spec.Volumes {
-		if v.Secret != nil && strings.HasPrefix(v.Secret.SecretName, resources.ConfigSecretName(testDhcp4CR, testComponent4)+"-") {
+		if v.Secret != nil && strings.HasSuffix(v.Secret.SecretName, "-"+rev) && strings.HasPrefix(v.Secret.SecretName, resources.ConfigSecretName(testDhcp4CR, testComponent4)+"-") {
 			secretVolumes++
 		}
 	}

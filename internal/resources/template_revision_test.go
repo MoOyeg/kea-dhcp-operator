@@ -58,8 +58,11 @@ func templateFixtures() map[string]corev1.PodTemplateSpec {
 		p := StatefulSetParams{CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
 			Replicas: &two, ConfigHash: "hash", ConfigMapNames: map[int]string{0: "cm-0", 1: "cm-1"},
-			PeerHostnameMap:   map[string]string{"test-dhcp4-0.test-dhcp4-hl": "test-dhcp4-0.default.svc", "test-dhcp4-1.test-dhcp4-hl": "test-dhcp4-1.default.svc"},
-			ConfigFromSecrets: configSecret, StorkAgent: s}
+			PeerHostnameMap: map[string]string{"test-dhcp4-0.test-dhcp4-hl": "test-dhcp4-0.default.svc", "test-dhcp4-1.test-dhcp4-hl": "test-dhcp4-1.default.svc"},
+			StorkAgent:      s}
+		if configSecret {
+			p.ConfigSecretNames = map[int]string{0: "test-dhcp4-config-0", 1: "test-dhcp4-config-1"}
+		}
 		if nad {
 			p.NADInterface, p.NADSubnet = testNADIface, testNADSubnet
 			p.PeerAddresses = map[int]string{0: "10.200.0.10", 1: "10.200.0.11"}

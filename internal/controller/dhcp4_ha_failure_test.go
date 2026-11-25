@@ -97,12 +97,12 @@ func haDhcp4Server(replicas int32, peers ...string) *keav1alpha1.KeaDhcp4Server 
 	}
 }
 
-// failingWrites makes Create and Update of the named ConfigMap fail while
-// the returned flag is set.
+// failingWrites makes Create and Update of the named ConfigMap, or of any of
+// its staged revisions (<name>-<revision>), fail while the returned flag is set.
 func failingWrites(name string) (interceptor.Funcs, *atomic.Bool) {
 	var fail atomic.Bool
 	check := func(obj client.Object) error {
-		if _, ok := obj.(*corev1.ConfigMap); ok && fail.Load() && obj.GetName() == name {
+		if _, ok := obj.(*corev1.ConfigMap); ok && fail.Load() && (obj.GetName() == name || strings.HasPrefix(obj.GetName(), name+"-")) {
 			return apierrors.NewForbidden(corev1.Resource("configmaps"), name, errors.New(testFailMsgWrite))
 		}
 		return nil
@@ -242,6 +242,16 @@ func TestDhcp4HAConfigMapWriteFailureKeepsWorkload(t *testing.T) {
 	if !ok || applied == "" {
 		t.Fatal("initial reconcile did not create the StatefulSet with a config hash")
 	}
+	appliedRev := resources.ShortRevision(applied)
+	before := map[string]string{}
+	for i := 0; i < 2; i++ {
+		cm := &corev1.ConfigMap{}
+		name := resources.HAConfigMapRevisionName(testDhcp4CR, testComponent4, i, appliedRev)
+		if err := c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: testNamespaceDefault}, cm); err != nil {
+			t.Fatalf("staged ConfigMap of the applied revision: %v", err)
+		}
+		before[name] = cm.Data[resources.ConfigFileName(testComponent4)]
+	}
 
 	server := getDhcp4(t, c)
 	life := testChangedLife
@@ -264,6 +274,17 @@ func TestDhcp4HAConfigMapWriteFailureKeepsWorkload(t *testing.T) {
 	}
 	if d := conditionOf(after, keav1alpha1.ConditionTypeDegraded); d == nil || d.Status != condTrue || d.Reason != "ConfigApplyError" {
 		t.Errorf("Degraded = %+v, want True/ConfigApplyError", d)
+	}
+	// The revision the StatefulSet references is complete and untouched, so
+	// a pod restarted now still reads one whole configuration.
+	for name, content := range before {
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: testNamespaceDefault}, cm); err != nil {
+			t.Fatalf("applied revision ConfigMap %s: %v", name, err)
+		}
+		if cm.Data[resources.ConfigFileName(testComponent4)] != content {
+			t.Errorf("applied revision ConfigMap %s was modified by the failed revision", name)
+		}
 	}
 
 	fail.Store(false)

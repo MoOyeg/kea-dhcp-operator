@@ -77,10 +77,11 @@ type StatefulSetParams struct {
 	InitContainerImage string
 	// StorkAgent holds resolved stork-agent sidecar params. Nil means no sidecar.
 	StorkAgent *StorkSidecarParams
-	// ConfigFromSecrets mounts each ordinal's configuration from its
-	// operator-owned Secret (HAConfigSecretName), which already holds the
-	// credentials, instead of its ConfigMap. Nothing is substituted at startup.
-	ConfigFromSecrets bool
+	// ConfigSecretNames maps ordinal index to the operator-owned Secret that
+	// holds that ordinal's configuration with the credentials rendered in.
+	// When an ordinal has one, it is mounted instead of its ConfigMap, and
+	// nothing is substituted at startup.
+	ConfigSecretNames map[int]string
 }
 
 // StatefulSetName returns the conventional StatefulSet name.
@@ -163,10 +164,9 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 				},
 			},
 		}
-		if p.ConfigFromSecrets {
+		if secretName, ok := p.ConfigSecretNames[int(i)]; ok {
 			mode := ConfigSecretMode
-			source = corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: HAConfigSecretName(p.CRName, p.Component, int(i)), DefaultMode: &mode}}
+			source = corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: &mode}}
 		}
 		volumes = append(volumes, corev1.Volume{Name: volName, VolumeSource: source})
 
