@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // ========== Database Configuration ==========
@@ -32,6 +33,47 @@ const (
 	DatabaseTypeMySQL      DatabaseType = "mysql"
 	DatabaseTypePostgreSQL DatabaseType = "postgresql"
 )
+
+// LeaseStorageType selects where memfile leases are kept.
+// +kubebuilder:validation:Enum=Ephemeral;ExistingClaim;ClaimTemplate
+type LeaseStorageType string
+
+const (
+	// LeaseStorageEphemeral keeps memfile leases in an emptyDir, which is
+	// removed with the pod. This is the default.
+	LeaseStorageEphemeral LeaseStorageType = "Ephemeral"
+	// LeaseStorageExistingClaim mounts a PersistentVolumeClaim the user
+	// provides. Standalone servers only, with a single replica.
+	LeaseStorageExistingClaim LeaseStorageType = "ExistingClaim"
+	// LeaseStorageClaimTemplate gives each HA peer its own
+	// PersistentVolumeClaim. HA servers only.
+	LeaseStorageClaimTemplate LeaseStorageType = "ClaimTemplate"
+)
+
+// LeaseStorage selects the volume that holds the memfile lease file. It only
+// applies to memfile leases; a MySQL or PostgreSQL lease database keeps
+// leases outside the pods already.
+type LeaseStorage struct {
+	// Storage type. Ephemeral (default) loses the lease file when the pod is
+	// replaced; ExistingClaim and ClaimTemplate keep it.
+	// +optional
+	// +kubebuilder:default=Ephemeral
+	Type LeaseStorageType `json:"type,omitempty"`
+
+	// Name of the PersistentVolumeClaim to mount (ExistingClaim). The operator
+	// never creates, modifies or deletes it.
+	// +optional
+	ClaimName string `json:"claimName,omitempty"`
+
+	// Requested size of each peer's claim (ClaimTemplate). Defaults to 1Gi.
+	// +optional
+	Size *resource.Quantity `json:"size,omitempty"`
+
+	// StorageClass of each peer's claim (ClaimTemplate). Defaults to the
+	// cluster default StorageClass.
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+}
 
 // DatabaseConfig defines database connection parameters used by lease-database and hosts-database.
 type DatabaseConfig struct {
@@ -663,6 +705,11 @@ const (
 	// them, because that would discard memfile leases kept in pod-local
 	// storage.
 	ConditionTypeRestartPending = "RestartPending"
+
+	// ConditionTypeLeasesDurable reports whether leases survive the
+	// replacement of the pods: True with a database lease backend or a
+	// persistent lease volume, False with memfile leases in an emptyDir.
+	ConditionTypeLeasesDurable = "LeasesDurable"
 )
 
 const (

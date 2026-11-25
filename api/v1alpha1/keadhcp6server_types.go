@@ -254,6 +254,11 @@ type KeaDhcp6ServerSpec struct {
 	// +optional
 	HostNetwork *bool `json:"hostNetwork,omitempty"`
 
+	// Where memfile leases are kept. Defaults to Ephemeral (an emptyDir that
+	// is removed with the pod). See LeaseStorage.
+	// +optional
+	LeaseStorage *LeaseStorage `json:"leaseStorage,omitempty"`
+
 	// Network interface configuration.
 	// +kubebuilder:validation:Required
 	InterfacesConfig InterfacesConfig `json:"interfaces-config"`

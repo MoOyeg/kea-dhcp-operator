@@ -71,6 +71,29 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 | `ModeChangeRequiresMigration` | `high-availability` was added or removed on a running server; see [Changing between standalone and HA](ha.md#changing-between-standalone-and-ha) |
 | `CredentialsUnavailable` | A referenced credential Secret or key does not exist; the running pods are left alone until it does |
 
+### Lease storage
+
+With memfile leases (no `lease-database`, or `type: memfile`), Kea keeps its lease file under `/var/lib/kea`. `leaseStorage` chooses the volume behind that directory:
+
+| `leaseStorage.type` | Volume | Applies to |
+|---------------------|--------|------------|
+| `Ephemeral` (default) | `emptyDir`, removed with the pod: leases are lost when a pod is replaced | Any server |
+| `ExistingClaim` | The PersistentVolumeClaim named in `claimName`, which you create and own; the operator never modifies or deletes it | Standalone servers with one replica (also KeaDhcp6Server) |
+| `ClaimTemplate` | One claim per HA peer (`kea-leases-<cr>-dhcp4-<ordinal>`), sized by `size` (default `1Gi`) with `storageClassName` (default: the cluster default); the claims are retained when the CR is deleted or scaled down | HA KeaDhcp4Server |
+
+```yaml
+spec:
+  leaseStorage:
+    type: ClaimTemplate
+    size: 1Gi
+```
+
+A standalone server on a claim uses the `Recreate` update strategy, so two pods never write the lease file at once; expect a short interruption on every rollout. The operator rejects durable storage together with a MySQL or PostgreSQL lease database (leases already live outside the pods), with `persist: false`, or with a `lease-database.name` outside `/var/lib/kea`.
+
+The `LeasesDurable` condition reports where leases live: `True` with reason `DatabaseBackend` or `PersistentVolume`, `False` with `EmptyDir` or `InMemory`. Durable memfile leases survive restarts, so credential rotations and operator upgrades roll their pods without asking for approval.
+
+A StatefulSet cannot change its claims in place. Changing `leaseStorage` on a running HA server, including from `Ephemeral` to `ClaimTemplate`, is refused with `Degraded=True`, reason `StorageChangeRequiresMigration`, and the running workload is left alone. To apply it, export the leases ([Preserving memfile leases](ha.md#preserving-memfile-leases)), delete the StatefulSet with `kubectl delete statefulset <cr>-dhcp4 --cascade=foreground --wait=true`, and import the leases into the new pods. Upgrading the operator keeps existing servers on `Ephemeral`; nothing moves to a claim unless you ask for it.
+
 ### Credential Secrets and rotation
 
 Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets are read by the operator and rendered into the Kea configuration, which it stores in an operator-owned Secret named `<cr>-<component>-config` (for HA, `<cr>-<component>-config-<ordinal>`). The pods mount that Secret read-only where the configuration lives; nothing is substituted at startup, so every character of a credential reaches Kea unchanged. The `<cr>-<component>` ConfigMaps keep the same configuration with placeholders instead of credentials, for inspection. Anyone who can read Secrets in the namespace can read the configuration Secret, which is the same audience that can read the credential Secrets themselves.

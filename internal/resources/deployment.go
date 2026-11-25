@@ -147,6 +147,10 @@ type DeploymentParams struct {
 	// configuration with its credentials already rendered in. It is mounted
 	// instead of ConfigMapName, so nothing is substituted at startup.
 	ConfigSecretName string
+	// LeaseClaimName, when set, mounts this PersistentVolumeClaim for the
+	// memfile lease file instead of an emptyDir, and switches the Deployment
+	// to the Recreate strategy so two pods never write the file at once.
+	LeaseClaimName string
 }
 
 // BuildDeployment constructs a Kubernetes Deployment for a Kea component based
@@ -181,12 +185,7 @@ func BuildDeployment(p DeploymentParams) *appsv1.Deployment {
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		{
-			Name: LeaseVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
+		{Name: LeaseVolumeName, VolumeSource: leaseVolumeSource(p.LeaseClaimName)},
 	}
 
 	// Volume mounts for the Kea container.
@@ -320,7 +319,19 @@ ip_last=$((d + 2)); `+
 		},
 	}
 
+	if p.LeaseClaimName != "" {
+		deploy.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
 	return deploy
+}
+
+// leaseVolumeSource returns the lease volume: the claim when one is named,
+// otherwise an emptyDir.
+func leaseVolumeSource(claimName string) corev1.VolumeSource {
+	if claimName == "" {
+		return corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+	}
+	return corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}
 }
 
 // withRunDirPermissions prefixes the container command with a chmod of the

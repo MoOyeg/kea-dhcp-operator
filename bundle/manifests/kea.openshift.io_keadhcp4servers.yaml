@@ -1,9 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  creationTimestamp: null
   name: keadhcp4servers.kea.openshift.io
 spec:
   group: kea.openshift.io
@@ -821,6 +821,40 @@ spec:
                     type: integer
                 required:
                 - type
+                type: object
+              leaseStorage:
+                description: |-
+                  Where memfile leases are kept. Defaults to Ephemeral (an emptyDir that
+                  is removed with the pod). See LeaseStorage.
+                properties:
+                  claimName:
+                    description: |-
+                      Name of the PersistentVolumeClaim to mount (ExistingClaim). The operator
+                      never creates, modifies or deletes it.
+                    type: string
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Requested size of each peer's claim (ClaimTemplate).
+                      Defaults to 1Gi.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    description: |-
+                      StorageClass of each peer's claim (ClaimTemplate). Defaults to the
+                      cluster default StorageClass.
+                    type: string
+                  type:
+                    default: Ephemeral
+                    description: |-
+                      Storage type. Ephemeral (default) loses the lease file when the pod is
+                      replaced; ExistingClaim and ClaimTemplate keep it.
+                    enum:
+                    - Ephemeral
+                    - ExistingClaim
+                    - ClaimTemplate
+                    type: string
                 type: object
               loggers:
                 description: Logging configuration.
@@ -3354,9 +3388,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: null
-  storedVersions: null

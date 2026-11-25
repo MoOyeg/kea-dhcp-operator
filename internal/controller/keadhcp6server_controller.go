@@ -99,7 +99,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	configJSON, err := renderer.RenderJSON()
+	configJSON, storage, err := renderDhcp6(renderer, server)
 	if err != nil {
 		setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", "RenderError", err.Error())
 		server.Status.Phase = keav1alpha1.PhaseError
@@ -152,7 +152,8 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	pp := r.resolveDhcp6PodParams(server)
-	durable := leasesSurvivePodReplacement(server.Spec.LeaseDatabase)
+	durable := leasesDurable(server.Spec.LeaseDatabase, storage)
+	reportLeasesDurable(&server.Status.Conditions, server.Spec.LeaseDatabase, storage)
 	existing, err := getWorkload(ctx, r.Client,
 		types.NamespacedName{Name: resources.DeploymentName(server.Name, component), Namespace: server.Namespace}, false)
 	if err != nil {
@@ -193,6 +194,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		PodAnnotations:     pp.podAnnotations,
 		StorkAgent:         storkAgent,
 		ConfigSecretName:   configSecretName(credValues != nil, server.Name, component),
+		LeaseClaimName:     storage.claimName,
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, rollout.applied)
@@ -429,4 +431,20 @@ func dhcp6CredentialEnv(server *keav1alpha1.KeaDhcp6Server, renderer *kea.Dhcp6C
 		}
 	}
 	return secretEnvVars
+}
+
+// renderDhcp6 validates the lease storage and renders the configuration. The
+// DHCPv6 server always runs as a Deployment, so only standalone storage
+// (ExistingClaim) applies.
+func renderDhcp6(renderer *kea.Dhcp6ConfigRenderer, server *keav1alpha1.KeaDhcp6Server) ([]byte, leaseStoragePlan, error) {
+	replicas := int32(1)
+	if server.Spec.Replicas != nil {
+		replicas = *server.Spec.Replicas
+	}
+	storage, err := planLeaseStorage(server.Spec.LeaseStorage, server.Spec.LeaseDatabase, false, replicas)
+	if err != nil {
+		return nil, leaseStoragePlan{}, err
+	}
+	configJSON, err := renderer.RenderJSON()
+	return configJSON, storage, err
 }

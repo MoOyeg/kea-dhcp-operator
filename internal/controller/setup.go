@@ -75,27 +75,34 @@ func EnsureDefaultNamespace(ctx context.Context, c client.Client) error {
 	return nil
 }
 
-// EnsureSCC creates the kea-dhcp SecurityContextConstraints on OpenShift.
+// sccGVK identifies OpenShift SecurityContextConstraints, which the operator
+// handles as unstructured objects so it does not depend on the OpenShift API
+// types.
+var sccGVK = schema.GroupVersionKind{Group: "security.openshift.io", Version: "v1", Kind: "SecurityContextConstraints"}
+
+// sccVolumes are the volume types Kea pods mount: their configuration
+// (configMap, secret, projected), the downward API, pod-local lease storage
+// (emptyDir) and durable lease storage (persistentVolumeClaim).
+var sccVolumes = []string{"configMap", "downwardAPI", "emptyDir", "persistentVolumeClaim", "projected", "secret"}
+
+// EnsureSCC creates the kea-dhcp SecurityContextConstraints on OpenShift, or
+// adds the volume types Kea pods need to an SCC an earlier release created.
 // Must only be called when the cluster is detected as OpenShift.
 func EnsureSCC(ctx context.Context, c client.Client) error {
 	scc := &unstructured.Unstructured{}
-	scc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "security.openshift.io",
-		Version: "v1",
-		Kind:    "SecurityContextConstraints",
-	})
+	scc.SetGroupVersionKind(sccGVK)
 
 	err := c.Get(ctx, client.ObjectKey{Name: sccName}, scc)
 	if err == nil {
-		return nil // already exists
+		return addMissingSCCVolumes(ctx, c, scc)
 	}
 	if !errors.IsNotFound(err) {
 		return fmt.Errorf("checking SCC %s: %w", sccName, err)
 	}
 
 	scc.Object = map[string]interface{}{
-		"apiVersion": "security.openshift.io/v1",
-		"kind":       "SecurityContextConstraints",
+		"apiVersion": sccGVK.GroupVersion().String(),
+		"kind":       sccGVK.Kind,
 		"metadata": map[string]interface{}{
 			"name": sccName,
 			"annotations": map[string]interface{}{
@@ -119,13 +126,57 @@ func EnsureSCC(ctx context.Context, c client.Client) error {
 		"seLinuxContext":           map[string]interface{}{fieldType: "MustRunAs"},
 		"fsGroup":                  map[string]interface{}{fieldType: "MustRunAs"},
 		"supplementalGroups":       map[string]interface{}{fieldType: "RunAsAny"},
-		"volumes":                  []interface{}{"configMap", "downwardAPI", "emptyDir", "projected", "secret"},
+		"volumes":                  toInterfaces(sccVolumes),
 	}
 
 	if err := c.Create(ctx, scc); err != nil {
 		return fmt.Errorf("creating SCC %s: %w", sccName, err)
 	}
 	return nil
+}
+
+// addMissingSCCVolumes appends the volume types in sccVolumes that an
+// existing SCC does not allow. Releases before durable lease storage created
+// the SCC without persistentVolumeClaim, and EnsureSCC never updated it, so
+// pods mounting a lease claim were rejected at admission. Volume types an
+// administrator added are kept; nothing is removed.
+func addMissingSCCVolumes(ctx context.Context, c client.Client, scc *unstructured.Unstructured) error {
+	allowed, _, err := unstructured.NestedStringSlice(scc.Object, "volumes")
+	if err != nil {
+		return fmt.Errorf("reading volumes of SCC %s: %w", sccName, err)
+	}
+	have := make(map[string]bool, len(allowed))
+	for _, v := range allowed {
+		have[v] = true
+	}
+	if have["*"] {
+		return nil
+	}
+	missing := false
+	for _, v := range sccVolumes {
+		if !have[v] {
+			allowed = append(allowed, v)
+			missing = true
+		}
+	}
+	if !missing {
+		return nil
+	}
+	if err := unstructured.SetNestedStringSlice(scc.Object, allowed, "volumes"); err != nil {
+		return fmt.Errorf("setting volumes of SCC %s: %w", sccName, err)
+	}
+	if err := c.Update(ctx, scc); err != nil {
+		return fmt.Errorf("updating volumes of SCC %s: %w", sccName, err)
+	}
+	return nil
+}
+
+func toInterfaces(values []string) []interface{} {
+	out := make([]interface{}, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
 }
 
 // EnsureSCCClusterRole creates the ClusterRole that grants "use" on the
@@ -146,7 +197,7 @@ func EnsureSCCClusterRole(ctx context.Context, c client.Client) error {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				APIGroups:     []string{"security.openshift.io"},
+				APIGroups:     []string{sccGVK.Group},
 				Resources:     []string{"securitycontextconstraints"},
 				ResourceNames: []string{sccName},
 				Verbs:         []string{"use"},
