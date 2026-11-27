@@ -56,9 +56,16 @@ jobs:
         run: |
           go version
           podman --version
-      # KEA_CONFIG_CHECK=1 makes a missing podman a failure, not a skip. The
-      # test logs the digest of each Kea image it parses against.
+      # KEA_CONFIG_CHECK=1 runs every test in the package that starts a Kea
+      # container, and makes a missing podman a failure, not a skip. The images
+      # are the operator's defaults; each test logs "Kea image: <ref>@<digest>".
       - name: Rendered configurations pass the shipped Kea parsers
         env:
           KEA_CONFIG_CHECK: "1"
-        run: go test ./internal/kea/ -run 'TestDDNSConfigAcceptedByKea|TestDatabaseBackendsLoadedByKea|TestCredentialsWithPunctuationAcceptedByKea' -count=1 -v
+        # An explicit bash shell runs with pipefail, so tee keeps test failures.
+        shell: bash
+        run: go test ./internal/kea/ -count=1 -v 2>&1 | tee kea-parser.log
+      - name: Kea images checked
+        if: always()
+        run: |
+          { echo '### Kea images checked'; grep -o 'Kea image: .*' kea-parser.log | sort -u; } >> "$GITHUB_STEP_SUMMARY"

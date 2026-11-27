@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
 
 const (
@@ -116,7 +117,8 @@ func TestSubstituteCredentialsErrorsCarryNoText(t *testing.T) {
 // so the escaping encoding/json produces is the escaping Kea reads.
 // It runs with KEA_CONFIG_CHECK=1 (see TestDDNSConfigAcceptedByKea).
 func TestCredentialsWithPunctuationAcceptedByKea(t *testing.T) {
-	podman, repo, tag := keaContainerCheck(t)
+	k := keaContainerCheck(t)
+	image := k.image(t, resources.ComponentDhcp4)
 	password := `a&b|c"d'e\f$KEA_LEASE_DB_USER` + "`g`\nh\tü 密码 {}[]"
 	data, err := SubstituteCredentials(renderWithPlaceholders(t), map[string]string{phUser: `us"er\`, phPass: password})
 	if err != nil {
@@ -126,8 +128,8 @@ func TestCredentialsWithPunctuationAcceptedByKea(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "kea-dhcp4.conf"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(podman, "run", "--rm", "--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
-		"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/kea-dhcp4", repo+"/kea-dhcp4:"+tag, "-t", "/cfg/kea-dhcp4.conf").CombinedOutput()
+	out, err := exec.Command(k.podman, "run", "--rm", "--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
+		"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/kea-dhcp4", image, "-t", "/cfg/kea-dhcp4.conf").CombinedOutput()
 	if err != nil || strings.Contains(string(out), "ERROR") {
 		t.Fatalf("kea-dhcp4 -t rejected a configuration with punctuation-heavy credentials: %v\n%s", err, out)
 	}

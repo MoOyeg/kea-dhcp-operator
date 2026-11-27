@@ -29,6 +29,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
 
 // Kea parameter names, enum values and scope labels used by the DDNS tests.
@@ -447,22 +448,10 @@ func TestDDNSValidationRejectsWhatKeaRejects(t *testing.T) {
 //
 //	KEA_CONFIG_CHECK=1 go test ./internal/kea/ -run TestDDNSConfigAcceptedByKea -v
 //
-// KEA_IMAGE_REPO (default docker.cloudsmith.io/isc/docker) and KEA_IMAGE_TAG
-// (default 3.0.2) pick the images.
+// The images are the operator's defaults; see keaContainerCheck for overrides.
 func TestDDNSConfigAcceptedByKea(t *testing.T) {
-	podman, repo, tag := keaContainerCheck(t)
-	// Record exactly which images were checked.
-	for _, v := range []string{"4", "6"} {
-		image := repo + "/kea-dhcp" + v + ":" + tag
-		if out, err := exec.Command(podman, "pull", "-q", image).CombinedOutput(); err != nil {
-			t.Fatalf("pulling %s: %v\n%s", image, err, out)
-		}
-		digest, err := exec.Command(podman, "image", "inspect", "--format", "{{.Digest}}", image).Output()
-		if err != nil {
-			t.Fatalf("inspecting %s: %v", image, err)
-		}
-		t.Logf("checking against %s@%s", image, strings.TrimSpace(string(digest)))
-	}
+	k := keaContainerCheck(t)
+	images := map[string]string{"4": k.image(t, resources.ComponentDhcp4), "6": k.image(t, resources.ComponentDhcp6)}
 
 	for _, f := range ddnsFixtures {
 		for _, v := range []string{"4", "6"} {
@@ -492,11 +481,11 @@ func TestDDNSConfigAcceptedByKea(t *testing.T) {
 					t.Fatal(err)
 				}
 				// The Kea binaries carry file capabilities, so the container needs them to exec.
-				cmd := exec.Command(podman, "run", "--rm",
+				cmd := exec.Command(k.podman, "run", "--rm",
 					"--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
 					"-v", dir+":/cfg:ro,z",
 					"--entrypoint", "/usr/sbin/kea-dhcp"+v,
-					repo+"/kea-dhcp"+v+":"+tag,
+					images[v],
 					"-t", "/cfg/"+cfg)
 				out, err := cmd.CombinedOutput()
 				if err != nil {

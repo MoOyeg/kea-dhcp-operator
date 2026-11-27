@@ -63,11 +63,11 @@ func TestDdnsWithForwardDDNS(t *testing.T) {
 		ForwardDDNS: &keav1alpha1.DDNSConfig{
 			DDNSDomains: []keav1alpha1.DDNSDomain{
 				{
-					Name:    "example.com.",
+					Name:    testForwardZone,
 					KeyName: "my-tsig-key",
 					DNSServers: []keav1alpha1.DNSServer{
 						{
-							IPAddress: "10.0.0.53",
+							IPAddress: testDNSServerIP,
 							Port:      &dnsPort,
 						},
 						{
@@ -114,7 +114,7 @@ func TestDdnsWithForwardDDNS(t *testing.T) {
 
 	// Check first domain
 	dom0 := domains[0].(map[string]interface{})
-	if dom0[fieldName] != "example.com." {
+	if dom0[fieldName] != testForwardZone {
 		t.Errorf("expected domain name 'example.com.', got %v", dom0[fieldName])
 	}
 	if dom0["key-name"] != "my-tsig-key" {
@@ -130,7 +130,7 @@ func TestDdnsWithForwardDDNS(t *testing.T) {
 	}
 
 	srv0 := servers[0].(map[string]interface{})
-	if srv0["ip-address"] != "10.0.0.53" {
+	if srv0["ip-address"] != testDNSServerIP {
 		t.Errorf("expected server ip-address '10.0.0.53', got %v", srv0["ip-address"])
 	}
 	if int32(srv0["port"].(float64)) != 53 {
@@ -162,7 +162,7 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 		TSIGKeys: []keav1alpha1.TSIGKey{
 			{
 				Name:       testTSIGKeyMD5,
-				Algorithm:  "HMAC-MD5",
+				Algorithm:  testTSIGAlgMD5,
 				DigestBits: &digestBits,
 			},
 			{
@@ -174,8 +174,8 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 
 	renderer := NewDdnsConfigRenderer(spec)
 	renderer.ResolvedTSIGSecrets = map[string]string{
-		testTSIGKeyMD5:    "LSWXnfkKZjdPJI5QxlpnfQ==",
-		testTSIGKeySHA256: "YmluZDEwa2V5Cg==",
+		testTSIGKeyMD5:    testTSIGSecretMD5,
+		testTSIGKeySHA256: testTSIGSecretSHA256,
 	}
 	data, err := renderer.RenderJSON()
 	if err != nil {
@@ -216,13 +216,13 @@ func TestDdnsWithTSIGKeys(t *testing.T) {
 	if key0[fieldName] != testTSIGKeyMD5 {
 		t.Errorf("expected key name 'my-hmac-md5', got %v", key0[fieldName])
 	}
-	if key0["algorithm"] != "HMAC-MD5" {
+	if key0["algorithm"] != testTSIGAlgMD5 {
 		t.Errorf("expected algorithm 'HMAC-MD5', got %v", key0["algorithm"])
 	}
 	if int32(key0["digest-bits"].(float64)) != 128 {
 		t.Errorf("expected digest-bits 128, got %v", key0["digest-bits"])
 	}
-	if key0["secret"] != "LSWXnfkKZjdPJI5QxlpnfQ==" {
+	if key0["secret"] != testTSIGSecretMD5 {
 		t.Errorf("expected secret 'LSWXnfkKZjdPJI5QxlpnfQ==', got %v", key0["secret"])
 	}
 
