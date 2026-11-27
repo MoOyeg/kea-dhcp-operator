@@ -61,4 +61,4 @@ jobs:
       - name: Rendered configurations pass the shipped Kea parsers
         env:
           KEA_CONFIG_CHECK: "1"
-        run: go test ./internal/kea/ -run TestDDNSConfigAcceptedByKea -count=1 -v
+        run: go test ./internal/kea/ -run 'TestDDNSConfigAcceptedByKea|TestDatabaseBackendsLoadedByKea' -count=1 -v
