@@ -73,7 +73,9 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 
 ### Credential Secrets and rotation
 
-Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets reach Kea through environment variables read at pod startup. The operator watches every Secret these fields reference, including ones marked `optional`, and tracks a credentials revision derived from the Secrets' names, UIDs and resource versions, never from their data. Any update to a referenced Secret counts, including a metadata-only one, and so does deleting and recreating it. An optional Secret that does not exist is allowed and tracked as absent.
+Database credentials (`lease-database`, `hosts-database`, each `hosts-databases` entry), Control Agent client passwords and DDNS TSIG secrets are read by the operator and rendered into the Kea configuration, which it stores in an operator-owned Secret named `<cr>-<component>-config` (for HA, `<cr>-<component>-config-<ordinal>`). The pods mount that Secret read-only where the configuration lives; nothing is substituted at startup, so every character of a credential reaches Kea unchanged. The `<cr>-<component>` ConfigMaps keep the same configuration with placeholders instead of credentials, for inspection. Anyone who can read Secrets in the namespace can read the configuration Secret, which is the same audience that can read the credential Secrets themselves.
+
+Kea reads its configuration when it starts. The operator watches every Secret these fields reference, including ones marked `optional`, and tracks a credentials revision derived from the Secrets' names, UIDs and resource versions, never from their data. Any update to a referenced Secret counts, including a metadata-only one, and so does deleting and recreating it. An optional Secret that does not exist is allowed and tracked as absent.
 
 A new revision only reaches Kea when the pods restart, and a restart discards whatever the pods keep in pod-local storage. The operator therefore applies it as follows:
 

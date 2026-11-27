@@ -40,28 +40,26 @@ type templateGolden struct {
 // templateFixtures renders the pod templates the builders produce for the
 // supported workload shapes.
 func templateFixtures() map[string]corev1.PodTemplateSpec {
-	secretEnv := []corev1.EnvVar{{
-		Name: "KEA_LEASE_DB_PASSWORD",
-		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: "db"}, Key: testSecretKey}},
-	}}
 	stork := &StorkSidecarParams{Image: testStorkAgentImage, ServerURL: testStorkServerURL, ServerToken: testStorkServerToken, Port: 8080, PrometheusPort: 9547}
-	deploy := func(nad bool, env []corev1.EnvVar, s *StorkSidecarParams) corev1.PodTemplateSpec {
+	deploy := func(nad, configSecret bool, s *StorkSidecarParams) corev1.PodTemplateSpec {
 		p := DeploymentParams{CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
-			ConfigMapName: testDeployConfigMap, ConfigHash: "hash", SecretEnvVars: env, StorkAgent: s}
+			ConfigMapName: testDeployConfigMap, ConfigHash: "hash", StorkAgent: s}
+		if configSecret {
+			p.ConfigSecretName = testConfigSecret
+		}
 		if nad {
 			p.NADInterface, p.NADSubnet = testNADIface, testNADSubnet
 		}
 		return BuildDeployment(p).Spec.Template
 	}
-	sts := func(nad bool, env []corev1.EnvVar, s *StorkSidecarParams) corev1.PodTemplateSpec {
+	sts := func(nad, configSecret bool, s *StorkSidecarParams) corev1.PodTemplateSpec {
 		two := int32(2)
 		p := StatefulSetParams{CRName: testCRName, Namespace: testNamespace, Component: ComponentDhcp4,
 			Command: DefaultCommandForComponent(ComponentDhcp4), ConfigFileName: ConfigFileName(ComponentDhcp4),
 			Replicas: &two, ConfigHash: "hash", ConfigMapNames: map[int]string{0: "cm-0", 1: "cm-1"},
-			PeerHostnameMap: map[string]string{"test-dhcp4-0.test-dhcp4-hl": "test-dhcp4-0.default.svc", "test-dhcp4-1.test-dhcp4-hl": "test-dhcp4-1.default.svc"},
-			SecretEnvVars:   env, StorkAgent: s}
+			PeerHostnameMap:   map[string]string{"test-dhcp4-0.test-dhcp4-hl": "test-dhcp4-0.default.svc", "test-dhcp4-1.test-dhcp4-hl": "test-dhcp4-1.default.svc"},
+			ConfigFromSecrets: configSecret, StorkAgent: s}
 		if nad {
 			p.NADInterface, p.NADSubnet = testNADIface, testNADSubnet
 			p.PeerAddresses = map[int]string{0: "10.200.0.10", 1: "10.200.0.11"}
@@ -69,15 +67,15 @@ func templateFixtures() map[string]corev1.PodTemplateSpec {
 		return BuildStatefulSet(p).Spec.Template
 	}
 	return map[string]corev1.PodTemplateSpec{
-		"deployment":                 deploy(false, nil, nil),
-		"deployment-nad":             deploy(true, nil, nil),
-		"deployment-credentials":     deploy(false, secretEnv, nil),
-		"deployment-nad-credentials": deploy(true, secretEnv, nil),
-		"deployment-stork":           deploy(false, nil, stork),
-		"statefulset":                sts(false, nil, nil),
-		"statefulset-nad":            sts(true, nil, nil),
-		"statefulset-credentials":    sts(false, secretEnv, nil),
-		"statefulset-stork":          sts(false, nil, stork),
+		"deployment":                 deploy(false, false, nil),
+		"deployment-nad":             deploy(true, false, nil),
+		"deployment-credentials":     deploy(false, true, nil),
+		"deployment-nad-credentials": deploy(true, true, nil),
+		"deployment-stork":           deploy(false, false, stork),
+		"statefulset":                sts(false, false, nil),
+		"statefulset-nad":            sts(true, false, nil),
+		"statefulset-credentials":    sts(false, true, nil),
+		"statefulset-stork":          sts(false, false, stork),
 	}
 }
 

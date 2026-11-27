@@ -54,7 +54,7 @@ type KeaDhcp4ServerReconciler struct {
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keadhcp4servers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -111,6 +111,10 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if done {
 		return ctrl.Result{}, err
 	}
+	credValues, err := credentialValuesIfAny(ctx, r.Client, server.Namespace, secretEnvVars)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// 4. Render and validate the whole configuration. Nothing is written yet.
 	plan, configJSON, err := renderDhcp4(renderer, server, *replicas, haEnabled)
@@ -133,7 +137,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Write the configuration. A failed write stops the reconcile before the
 	// workload template can point at the new revision.
-	configHash, err := r.writeDhcp4Configs(ctx, server, component, labels, plan, configJSON)
+	configHash, err := r.writeDhcp4Configs(ctx, server, component, labels, plan, configJSON, credValues)
 	if err != nil {
 		return r.failDhcp4Apply(ctx, server, err)
 	}
@@ -169,6 +173,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	reportCredentialRollout(&server.Status.Conditions, rollout)
 	pp.podAnnotations = withCredentialsRevision(pp.podAnnotations, rollout.stamp)
 	pp.appliedCredentials = rollout.applied
+	pp.configFromSecret = credValues != nil
 	pp.templateHold = decideTemplateHold(existing, server, durable, configHash, rollout.stamp)
 	reportRestartPending(&server.Status.Conditions, pp.templateHold)
 
@@ -179,7 +184,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// 6. Reconcile workload (StatefulSet for HA, Deployment otherwise).
-	readyReplicas, err := r.reconcileDhcp4Workload(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent, haEnabled)
+	readyReplicas, err := r.reconcileDhcp4Workload(ctx, server, component, pp, replicas, configHash, storkAgent, haEnabled)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -218,6 +223,9 @@ type dhcp4PodParams struct {
 	appliedCredentials string
 	// templateHold keeps an earlier release's pod template; see decideTemplateHold.
 	templateHold templateHold
+	// configFromSecret mounts the operator-owned configuration Secret, which
+	// holds the rendered credentials, instead of the ConfigMap.
+	configFromSecret bool
 }
 
 // resolveDhcp4PodParams extracts common pod parameters from the CR spec.
@@ -283,14 +291,13 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Workload(
 	pp dhcp4PodParams,
 	replicas *int32,
 	configHash string,
-	secretEnvVars []corev1.EnvVar,
 	storkAgent *resources.StorkSidecarParams,
 	haEnabled bool,
 ) (int32, error) {
 	if haEnabled {
-		return r.reconcileDhcp4HAWorkload(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent)
+		return r.reconcileDhcp4HAWorkload(ctx, server, component, pp, replicas, configHash, storkAgent)
 	}
-	return r.reconcileDhcp4Deployment(ctx, server, component, pp, replicas, configHash, secretEnvVars, storkAgent)
+	return r.reconcileDhcp4Deployment(ctx, server, component, pp, replicas, configHash, storkAgent)
 }
 
 // reconcileDhcp4HAWorkload reconciles the headless Service, per-pod Services and
@@ -302,7 +309,6 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 	pp dhcp4PodParams,
 	replicas *int32,
 	configHash string,
-	secretEnvVars []corev1.EnvVar,
 	storkAgent *resources.StorkSidecarParams,
 ) (int32, error) {
 	var readyReplicas int32
@@ -399,7 +405,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 		NADSubnet:          nadSubnet(server),
 		PeerAddresses:      peerAddresses,
 		StorkAgent:         storkAgent,
-		SecretEnvVars:      secretEnvVars,
+		ConfigFromSecrets:  pp.configFromSecret,
 	}
 	sts := resources.BuildStatefulSet(sp)
 	withAppliedCredentials(sts, pp.appliedCredentials)
@@ -429,7 +435,6 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 	pp dhcp4PodParams,
 	replicas *int32,
 	configHash string,
-	secretEnvVars []corev1.EnvVar,
 	storkAgent *resources.StorkSidecarParams,
 ) (int32, error) {
 	var readyReplicas int32
@@ -458,7 +463,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4Deployment(
 		NADInterface:       nadInterface(server),
 		NADSubnet:          nadSubnet(server),
 		StorkAgent:         storkAgent,
-		SecretEnvVars:      secretEnvVars,
+		ConfigSecretName:   configSecretName(pp.configFromSecret, server.Name, component),
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, pp.appliedCredentials)
@@ -581,17 +586,37 @@ func renderDhcp4(renderer *kea.Dhcp4ConfigRenderer, server *keav1alpha1.KeaDhcp4
 }
 
 // writeDhcp4Configs writes the rendered configuration and returns its hash.
+// The ConfigMaps keep the placeholder configuration (and the hash is taken
+// from it, so a credential rotation is governed by the credentials revision,
+// not by a configuration change). When credentials are referenced, the same
+// configuration with the credentials rendered in also goes into an
+// operator-owned Secret per ConfigMap, which the pods mount.
 func (r *KeaDhcp4ServerReconciler) writeDhcp4Configs(ctx context.Context, server *keav1alpha1.KeaDhcp4Server,
-	component string, labels map[string]string, plan *haConfigPlan, configJSON []byte) (string, error) {
+	component string, labels map[string]string, plan *haConfigPlan, configJSON []byte, credValues map[string]string) (string, error) {
+	fileName := resources.ConfigFileName(component)
 	if plan != nil {
 		if err := r.applyHAConfigs(ctx, server, component, labels, plan); err != nil {
 			return "", err
+		}
+		if credValues != nil {
+			for i, cfg := range plan.configs {
+				if err := writeConfigSecret(ctx, r.Client, r.Scheme, server,
+					resources.HAConfigSecretName(server.Name, component, i), fileName, cfg, credValues, labels); err != nil {
+					return "", err
+				}
+			}
 		}
 		return plan.hash, nil
 	}
 	cm := resources.BuildConfigMap(server.Namespace, server.Name, component, configJSON, labels)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, server, cm); err != nil {
 		return "", fmt.Errorf("writing ConfigMap: %w", err)
+	}
+	if credValues != nil {
+		if err := writeConfigSecret(ctx, r.Client, r.Scheme, server,
+			resources.ConfigSecretName(server.Name, component), fileName, configJSON, credValues, labels); err != nil {
+			return "", err
+		}
 	}
 	return kea.ComputeHash(configJSON), nil
 }
@@ -788,5 +813,6 @@ func dhcp4SecretMapFunc(c client.Reader) handler.MapFunc {
 	return anyOf(
 		enqueueOnStorkTokenSecret(listStorkEnabledDhcp4, c),
 		enqueueReferencingCRs(c, listDhcp4SecretRefs),
+		enqueueControllingCR("KeaDhcp4Server"),
 	)
 }

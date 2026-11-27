@@ -77,9 +77,10 @@ type StatefulSetParams struct {
 	InitContainerImage string
 	// StorkAgent holds resolved stork-agent sidecar params. Nil means no sidecar.
 	StorkAgent *StorkSidecarParams
-	// SecretEnvVars are environment variables sourced from Secrets (via ValueFrom.SecretKeyRef).
-	// The Kea config uses env var placeholders that are expanded at container startup.
-	SecretEnvVars []corev1.EnvVar
+	// ConfigFromSecrets mounts each ordinal's configuration from its
+	// operator-owned Secret (HAConfigSecretName), which already holds the
+	// credentials, instead of its ConfigMap. Nothing is substituted at startup.
+	ConfigFromSecrets bool
 }
 
 // StatefulSetName returns the conventional StatefulSet name.
@@ -155,16 +156,19 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 			cmName = HAConfigMapName(p.CRName, p.Component, int(i))
 		}
 
-		volumes = append(volumes, corev1.Volume{
-			Name: volName,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: cmName,
-					},
+		source := corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: cmName,
 				},
 			},
-		})
+		}
+		if p.ConfigFromSecrets {
+			mode := ConfigSecretMode
+			source = corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: HAConfigSecretName(p.CRName, p.Component, int(i)), DefaultMode: &mode}}
+		}
+		volumes = append(volumes, corev1.Volume{Name: volName, VolumeSource: source})
 
 		initVolumeMounts = append(initVolumeMounts, corev1.VolumeMount{
 			Name:      volName,
@@ -232,8 +236,10 @@ func BuildStatefulSet(p StatefulSetParams) *appsv1.StatefulSet {
 	// Init container: selects the correct config based on hostname ordinal,
 	// then resolves any HA peer hostnames to IPs (Kea can't resolve DNS in peer URLs).
 	configDst := fmt.Sprintf("%s/%s", ActiveConfigMountPath, p.ConfigFileName)
+	// set -e: a failed copy or edit stops the pod instead of starting Kea
+	// on a missing or half-edited configuration.
 	initScript := fmt.Sprintf(
-		`chmod 750 %s; ordinal=${HOSTNAME##*-}; cp %s/${ordinal}/%s %s; echo "Selected config for ordinal ${ordinal}"`,
+		`set -e; chmod 750 %s; ordinal=${HOSTNAME##*-}; cp %s/${ordinal}/%s %s; echo "Selected config for ordinal ${ordinal}"`,
 		RunMountPath, ConfigsBaseMountPath, p.ConfigFileName, configDst,
 	)
 	// Append DNS resolution commands for each peer.
@@ -275,15 +281,10 @@ fi`, configHostname, stsName, configHostname, configDst, configHostname,
 			serviceHostname, serviceHostname, configHostname, configDst, configHostname, serviceHostname, serviceHostname)
 	}
 
-	// Expand secret env var placeholders in the config.
-	for _, ev := range p.SecretEnvVars {
-		initScript += fmt.Sprintf(`; sed -i "s|\$%s|${%s}|g" %s`, ev.Name, ev.Name, configDst)
-	}
-
-	// Never print the selected config: after the expansion above it holds the
-	// database credentials, and container logs are readable far more widely
-	// than the Secret they came from. Inspect the per-ordinal ConfigMaps,
-	// which only carry placeholders, to debug a configuration.
+	// Never print the selected config: it can hold database credentials, and
+	// container logs are readable far more widely than the Secret they came
+	// from. Inspect the per-ordinal ConfigMaps, which only carry
+	// placeholders, to debug a configuration.
 
 	initImage := DefaultInitContainerImage
 	if p.InitContainerImage != "" {
@@ -294,7 +295,6 @@ fi`, configHostname, stsName, configHostname, configDst, configHostname,
 		Name:         "config-selector",
 		Image:        initImage,
 		Command:      []string{"sh", "-c", initScript},
-		Env:          p.SecretEnvVars,
 		VolumeMounts: initVolumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{

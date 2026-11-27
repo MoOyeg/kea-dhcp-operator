@@ -107,20 +107,7 @@ func TestDatabaseHooksCoverEveryDatabase(t *testing.T) {
 // It needs podman and network access, so it only runs with KEA_CONFIG_CHECK=1
 // (KEA_IMAGE_REPO and KEA_IMAGE_TAG as for TestDDNSConfigAcceptedByKea).
 func TestDatabaseBackendsLoadedByKea(t *testing.T) {
-	if os.Getenv("KEA_CONFIG_CHECK") != "1" {
-		t.Skip("set KEA_CONFIG_CHECK=1 to start the Kea container images")
-	}
-	podman, err := exec.LookPath("podman")
-	if err != nil {
-		t.Fatal("KEA_CONFIG_CHECK=1 but podman is not installed")
-	}
-	repo, tag := os.Getenv("KEA_IMAGE_REPO"), os.Getenv("KEA_IMAGE_TAG")
-	if repo == "" {
-		repo = "docker.cloudsmith.io/isc/docker"
-	}
-	if tag == "" {
-		tag = "3.0.2"
-	}
+	podman, repo, tag := keaContainerCheck(t)
 
 	// Nothing listens on 127.0.0.1:3399 inside the container.
 	unreachable := func(dbType keav1alpha1.DatabaseType) keav1alpha1.DatabaseConfig {

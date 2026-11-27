@@ -182,7 +182,7 @@ func dhcp4Spec(f ddnsFixture) *keav1alpha1.KeaDhcp4ServerSpec {
 		DDNSUseConflictResolution: boolPtr(true),
 		Subnet4: []keav1alpha1.Subnet4{{
 			ID: 1, Subnet: testSubnet4CIDR, DDNSBehavior: f.behavior(suffixSubnet),
-			Pools: []keav1alpha1.Pool4{{Pool: "192.0.2.10 - 192.0.2.100", DDNSBehavior: f.behavior(suffixPool),
+			Pools: []keav1alpha1.Pool4{{Pool: testPool4Range, DDNSBehavior: f.behavior(suffixPool),
 				RequireClientClasses: []string{"c1"}}},
 		}},
 		SharedNetworks: []keav1alpha1.SharedNetwork4{{
@@ -360,7 +360,7 @@ func TestDDNSValidationRejectsWhatKeaRejects(t *testing.T) {
 			name: "fixed ttl and percent at pool scope",
 			spec: &keav1alpha1.KeaDhcp4ServerSpec{InterfacesConfig: iface,
 				Subnet4: []keav1alpha1.Subnet4{{ID: 1, Subnet: testSubnet4CIDR,
-					Pools: []keav1alpha1.Pool4{{Pool: "192.0.2.10 - 192.0.2.100",
+					Pools: []keav1alpha1.Pool4{{Pool: testPool4Range,
 						DDNSBehavior: keav1alpha1.DDNSBehavior{DDNSTTL: int32Ptr(600), DDNSTTLPercent: ttlPercent("0.5")}}}}}},
 			wantErr: "subnet4[0].pools[0]: cannot specify both ddns-ttl-percent and ddns-ttl",
 		},
@@ -450,23 +450,7 @@ func TestDDNSValidationRejectsWhatKeaRejects(t *testing.T) {
 // KEA_IMAGE_REPO (default docker.cloudsmith.io/isc/docker) and KEA_IMAGE_TAG
 // (default 3.0.2) pick the images.
 func TestDDNSConfigAcceptedByKea(t *testing.T) {
-	if os.Getenv("KEA_CONFIG_CHECK") != "1" {
-		t.Skip("set KEA_CONFIG_CHECK=1 to validate rendered configs with the Kea container images")
-	}
-	// The check was explicitly requested, so a missing tool is a failure,
-	// not a silent skip that would let CI report success without parsing.
-	podman, err := exec.LookPath("podman")
-	if err != nil {
-		t.Fatal("KEA_CONFIG_CHECK=1 but podman is not installed")
-	}
-	repo := os.Getenv("KEA_IMAGE_REPO")
-	if repo == "" {
-		repo = "docker.cloudsmith.io/isc/docker"
-	}
-	tag := os.Getenv("KEA_IMAGE_TAG")
-	if tag == "" {
-		tag = "3.0.2"
-	}
+	podman, repo, tag := keaContainerCheck(t)
 	// Record exactly which images were checked.
 	for _, v := range []string{"4", "6"} {
 		image := repo + "/kea-dhcp" + v + ":" + tag

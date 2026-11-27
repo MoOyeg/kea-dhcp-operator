@@ -48,7 +48,7 @@ type KeaControlAgentReconciler struct {
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keacontrolagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kea.openshift.io,resources=keacontrolagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -93,6 +93,10 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if done {
 		return ctrl.Result{}, err
 	}
+	credValues, err := credentialValuesIfAny(ctx, r.Client, agent.Namespace, secretEnvVars)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	configJSON, err := renderer.RenderJSON()
 	if err != nil {
@@ -117,6 +121,14 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	cm := resources.BuildConfigMap(agent.Namespace, agent.Name, component, configJSON, labels)
 	if err := reconcileResource(ctx, r.Client, r.Scheme, agent, cm); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling ConfigMap: %w", err)
+	}
+	// The ConfigMap keeps the placeholder configuration; with credentials,
+	// the pods mount an operator-owned Secret with them rendered in.
+	if credValues != nil {
+		if err := writeConfigSecret(ctx, r.Client, r.Scheme, agent, resources.ConfigSecretName(agent.Name, component),
+			resources.ConfigFileName(component), configJSON, credValues, labels); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 5. Reconcile ServiceAccount.
@@ -186,7 +198,7 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		ConfigHash:         configHash,
 		ImagePullSecrets:   agent.Spec.Container.ImagePullSecrets,
 		PodAnnotations:     podAnnotations,
-		SecretEnvVars:      secretEnvVars,
+		ConfigSecretName:   configSecretName(credValues != nil, agent.Name, component),
 	}
 	deploy := resources.BuildDeployment(dp)
 	withAppliedCredentials(deploy, rollout.applied)
@@ -254,7 +266,8 @@ func (r *KeaControlAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
-			enqueueReferencingCRs(mgr.GetClient(), listCtrlAgentSecretRefs))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(anyOf(
+			enqueueReferencingCRs(mgr.GetClient(), listCtrlAgentSecretRefs),
+			enqueueControllingCR("KeaControlAgent")))).
 		Complete(r)
 }

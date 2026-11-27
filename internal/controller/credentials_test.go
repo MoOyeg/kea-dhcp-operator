@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"testing"
 
@@ -37,16 +36,17 @@ import (
 )
 
 const (
-	testCredSecret   = "db-creds"
-	testOtherSecret  = "unrelated"
-	testCredPassword = "synthetic-pw-1"
-	testOtherNS      = "other"
-	testKeyUsername  = "username"
-	testKeyPassword  = "password"
-	testDBHost       = "db.example"
-	testHostsDBName  = "hosts"
-	testKeaName      = "kea"
-	testIfaceEth0    = "eth0"
+	testCredSecret    = "db-creds"
+	testOtherSecret   = "unrelated"
+	testCredPassword  = "synthetic-pw-1"
+	testOtherPassword = "other-pw-7d1"
+	testOtherNS       = "other"
+	testKeyUsername   = "username"
+	testKeyPassword   = "password"
+	testDBHost        = "db.example"
+	testHostsDBName   = "hosts"
+	testKeaName       = "kea"
+	testIfaceEth0     = "eth0"
 )
 
 func credSecret(name, uid, password string) *corev1.Secret {
@@ -246,22 +246,76 @@ func TestAnyOfDropsDuplicates(t *testing.T) {
 	}
 }
 
-func deploymentCredentials(t *testing.T, c client.Client) (string, []string) {
+func deploymentCredentials(t *testing.T, c client.Client) string {
 	t.Helper()
 	d := &appsv1.Deployment{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name: resources.DeploymentName(testDhcp4CR, testComponent4), Namespace: testNamespaceDefault}, d); err != nil {
 		t.Fatalf("getting Deployment: %v", err)
 	}
-	var names []string
+	return d.Spec.Template.Annotations[resources.CredentialsRevisionAnnotation]
+}
+
+// assertCredentialsDelivered checks how credentials reach a component: the
+// pods mount the operator-owned configuration Secret and carry no credential
+// env vars, that Secret holds the value of every watched Secret, the
+// ConfigMap holds none of them, and the watch covers exactly the Secrets
+// whose values are delivered.
+func assertCredentialsDelivered(t *testing.T, c client.Client, crName, component string, watched []string, values map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	d := &appsv1.Deployment{}
+	if err := c.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(crName, component), Namespace: testNamespaceDefault}, d); err != nil {
+		t.Fatalf("getting Deployment: %v", err)
+	}
 	for _, ctr := range d.Spec.Template.Spec.Containers {
 		for _, ev := range ctr.Env {
 			if ev.ValueFrom != nil && ev.ValueFrom.SecretKeyRef != nil {
-				names = append(names, ev.ValueFrom.SecretKeyRef.Name)
+				t.Errorf("container %s still takes credential %s from an env var", ctr.Name, ev.Name)
 			}
 		}
 	}
-	return d.Spec.Template.Annotations[resources.CredentialsRevisionAnnotation], names
+	secretName := resources.ConfigSecretName(crName, component)
+	mounted := false
+	for _, v := range d.Spec.Template.Spec.Volumes {
+		mounted = mounted || (v.Name == resources.ConfigVolumeName && v.Secret != nil && v.Secret.SecretName == secretName)
+	}
+	if !mounted {
+		t.Errorf("the pods do not mount the configuration Secret %s", secretName)
+	}
+
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: testNamespaceDefault}, secret); err != nil {
+		t.Fatalf("configuration Secret: %v", err)
+	}
+	if !metav1.IsControlledBy(secret, d) && len(secret.OwnerReferences) == 0 {
+		t.Error("configuration Secret has no owner, so it outlives the CR")
+	}
+	rendered := string(secret.Data[resources.ConfigFileName(component)])
+	cm := &corev1.ConfigMap{}
+	if err := c.Get(ctx, types.NamespacedName{Name: resources.ConfigMapName(crName, component), Namespace: testNamespaceDefault}, cm); err != nil {
+		t.Fatalf("ConfigMap: %v", err)
+	}
+	placeholders := cm.Data[resources.ConfigFileName(component)]
+
+	watchedSet := map[string]bool{}
+	for _, n := range watched {
+		watchedSet[n] = true
+	}
+	if len(watchedSet) != len(values) {
+		t.Errorf("watched Secrets %v, delivered Secrets %v", watched, values)
+	}
+	for name, value := range values {
+		if !watchedSet[name] {
+			t.Errorf("the value of Secret %q reaches the pods but the watch ignores it", name)
+		}
+		if !strings.Contains(rendered, value) {
+			t.Errorf("configuration Secret lacks the value of Secret %q", name)
+		}
+		if strings.Contains(placeholders, value) {
+			t.Errorf("ConfigMap contains the value of Secret %q", name)
+		}
+	}
 }
 
 // Rotating the referenced Secret rolls the pods exactly once; a missing
@@ -274,37 +328,23 @@ func TestDhcp4CredentialRotationRollsPods(t *testing.T) {
 		CredentialsSecretRef: &corev1.LocalObjectReference{Name: testOtherSecret},
 	}}
 	r, c := newDhcp4Reconciler(t, nil, server,
-		credSecret(testCredSecret, "uid-1", testCredPassword), credSecret(testOtherSecret, "uid-2", "x"))
+		credSecret(testCredSecret, "uid-1", testCredPassword), credSecret(testOtherSecret, "uid-2", testOtherPassword))
 	r.Recorder = record.NewFakeRecorder(100)
 
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatal(err)
 	}
-	first, envSecrets := deploymentCredentials(t, c)
+	first := deploymentCredentials(t, c)
 	if first == "" {
 		t.Fatal("no credentials-revision annotation on the pod template")
 	}
-	// The watch must cover exactly the Secrets the pods reference.
-	sort.Strings(envSecrets)
-	envSet := map[string]bool{}
-	for _, n := range envSecrets {
-		envSet[n] = true
-	}
-	watched := dhcp4SecretNames(getDhcp4(t, c))
-	for _, n := range watched {
-		if !envSet[n] {
-			t.Errorf("watched Secret %q is not referenced by the pods", n)
-		}
-		delete(envSet, n)
-	}
-	if len(envSet) != 0 {
-		t.Errorf("pods reference Secrets the watch ignores: %v", envSet)
-	}
+	assertCredentialsDelivered(t, c, testDhcp4CR, testComponent4, dhcp4SecretNames(getDhcp4(t, c)),
+		map[string]string{testCredSecret: testCredPassword, testOtherSecret: testOtherPassword})
 
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := deploymentCredentials(t, c); again != first {
+	if again := deploymentCredentials(t, c); again != first {
 		t.Errorf("unchanged Secrets changed the token: %q -> %q", first, again)
 	}
 
@@ -319,7 +359,7 @@ func TestDhcp4CredentialRotationRollsPods(t *testing.T) {
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatal(err)
 	}
-	rotated, _ := deploymentCredentials(t, c)
+	rotated := deploymentCredentials(t, c)
 	if rotated == first {
 		t.Fatal("rotating the Secret did not change the pod template")
 	}
@@ -330,7 +370,7 @@ func TestDhcp4CredentialRotationRollsPods(t *testing.T) {
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatalf("a missing Secret is reported through status, not a retry loop: %v", err)
 	}
-	if kept, _ := deploymentCredentials(t, c); kept != rotated {
+	if kept := deploymentCredentials(t, c); kept != rotated {
 		t.Errorf("workload changed while its Secret was missing: %q -> %q", rotated, kept)
 	}
 	if d := conditionOf(getDhcp4(t, c), keav1alpha1.ConditionTypeDegraded); d == nil || d.Status != condTrue || d.Reason != reasonCredentialsUnavailable {
@@ -343,7 +383,7 @@ func TestDhcp4CredentialRotationRollsPods(t *testing.T) {
 	if err := reconcileDhcp4(r); err != nil {
 		t.Fatal(err)
 	}
-	if recreated, _ := deploymentCredentials(t, c); recreated == rotated {
+	if recreated := deploymentCredentials(t, c); recreated == rotated {
 		t.Error("recreating the Secret did not change the pod template")
 	}
 	if d := conditionOf(getDhcp4(t, c), keav1alpha1.ConditionTypeDegraded); d == nil || d.Status != condFalse {
@@ -434,7 +474,7 @@ func TestCredentialComponentsStampRevisionAndWatchTheirSecrets(t *testing.T) {
 	for _, tc := range components {
 		t.Run(tc.name, func(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(controllerTestScheme(t)).WithStatusSubresource(tc.status).
-				WithObjects(tc.cr, credSecret(testCredSecret, "uid-1", testCredPassword), credSecret(testOtherSecret, "uid-2", "x")).Build()
+				WithObjects(tc.cr, credSecret(testCredSecret, "uid-1", testCredPassword), credSecret(testOtherSecret, "uid-2", testOtherPassword)).Build()
 			if err := tc.reconcile(c); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
@@ -446,26 +486,29 @@ func TestCredentialComponentsStampRevisionAndWatchTheirSecrets(t *testing.T) {
 			if d.Spec.Template.Annotations[resources.CredentialsRevisionAnnotation] == "" {
 				t.Error("no credentials-revision annotation on the pod template")
 			}
-			referenced := map[string]bool{}
-			for _, ctr := range d.Spec.Template.Spec.Containers {
-				for _, ev := range ctr.Env {
-					if ev.ValueFrom != nil && ev.ValueFrom.SecretKeyRef != nil {
-						referenced[ev.ValueFrom.SecretKeyRef.Name] = true
-					}
-				}
+			values := map[string]string{testCredSecret: testCredPassword}
+			if tc.name != "KeaDhcpDdns" {
+				values[testOtherSecret] = testOtherPassword
 			}
-			watched := map[string]bool{}
-			for _, n := range tc.watched(c) {
-				watched[n] = true
-			}
-			if len(referenced) == 0 || len(watched) != len(referenced) {
-				t.Fatalf("watched Secrets %v, pods reference %v", watched, referenced)
-			}
-			for n := range referenced {
-				if !watched[n] {
-					t.Errorf("pods reference Secret %q but the watch ignores it", n)
-				}
-			}
+			assertCredentialsDelivered(t, c, crName, tc.component, tc.watched(c), values)
 		})
+	}
+}
+
+// An edited or deleted operator-owned configuration Secret enqueues the CR
+// that owns it, so the next reconcile puts it back.
+func TestEnqueueControllingCR(t *testing.T) {
+	owner := dhcp4WithLeaseDB("owner", testNamespaceDefault, "")
+	owned := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "owner-dhcp4-config", Namespace: testNamespaceDefault,
+		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(owner, keav1alpha1.GroupVersion.WithKind("KeaDhcp4Server"))}}}
+	got := enqueueControllingCR("KeaDhcp4Server")(context.Background(), owned)
+	if len(got) != 1 || got[0].Name != "owner" || got[0].Namespace != testNamespaceDefault {
+		t.Errorf("requests = %v, want default/owner", got)
+	}
+	if got := enqueueControllingCR("KeaDhcp6Server")(context.Background(), owned); len(got) != 0 {
+		t.Errorf("another kind enqueued %v", got)
+	}
+	if got := enqueueControllingCR("KeaDhcp4Server")(context.Background(), &corev1.Secret{}); len(got) != 0 {
+		t.Errorf("an unowned Secret enqueued %v", got)
 	}
 }
