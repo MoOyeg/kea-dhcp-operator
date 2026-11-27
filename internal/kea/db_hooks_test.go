@@ -28,6 +28,7 @@ import (
 	"time"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
+	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
 
 // testHooksDBName is the database name used by the hook tests.
@@ -105,9 +106,13 @@ func TestDatabaseHooksCoverEveryDatabase(t *testing.T) {
 // against an unreachable database: with the hook it fails to connect, without
 // it it fails with "not been compiled with support for host database type".
 // It needs podman and network access, so it only runs with KEA_CONFIG_CHECK=1
-// (KEA_IMAGE_REPO and KEA_IMAGE_TAG as for TestDDNSConfigAcceptedByKea).
+// (images as for TestDDNSConfigAcceptedByKea).
 func TestDatabaseBackendsLoadedByKea(t *testing.T) {
-	podman, repo, tag := keaContainerCheck(t)
+	k := keaContainerCheck(t)
+	images := map[string]string{
+		resources.ComponentDhcp4: k.image(t, resources.ComponentDhcp4),
+		resources.ComponentDhcp6: k.image(t, resources.ComponentDhcp6),
+	}
 
 	// Nothing listens on 127.0.0.1:3399 inside the container.
 	unreachable := func(dbType keav1alpha1.DatabaseType) keav1alpha1.DatabaseConfig {
@@ -146,10 +151,10 @@ func TestDatabaseBackendsLoadedByKea(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, podman, "run", "--rm",
+			cmd := exec.CommandContext(ctx, k.podman, "run", "--rm",
 				"--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
 				"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/kea-"+tc.component,
-				repo+"/kea-"+tc.component+":"+tag, "-c", "/cfg/"+cfg)
+				images[tc.component], "-c", "/cfg/"+cfg)
 			out, _ := cmd.CombinedOutput() // Kea exits with an error: the database is unreachable.
 			log := string(out)
 			if strings.Contains(log, "not been compiled with support for host database type") {
