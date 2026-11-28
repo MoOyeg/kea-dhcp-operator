@@ -67,7 +67,7 @@ metadata:
             },
             "control-socket": {
               "socket-type": "unix",
-              "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"
+              "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"
             },
             "high-availability": {
               "mode": "load-balancing",
@@ -114,7 +114,7 @@ metadata:
               "persist": true
             },
             "option-data": [
-              {"name": "dns-recursive-name-server", "data": "2001:db8:1::dead:beef"}
+              {"name": "dns-servers", "data": "2001:db8:1::dead:beef"}
             ],
             "subnet6": [
               {
@@ -139,8 +139,8 @@ metadata:
             "http-host": "0.0.0.0",
             "http-port": 8000,
             "control-sockets": {
-              "dhcp4": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"},
-              "dhcp6": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp6-ctrl.sock"}
+              "dhcp4": {"socket-type": "unix", "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"},
+              "dhcp6": {"socket-type": "unix", "socket-name": "/var/run/kea/kea-dhcp6-ctrl.sock"}
             },
             "loggers": [
               {"name": "kea-ctrl-agent", "severity": "INFO", "output-options": [{"output": "stdout"}]}
@@ -217,7 +217,7 @@ metadata:
               ],
               "control-socket": {
                 "socket-type": "unix",
-                "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"
+                "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"
               },
               "loggers": [
                 {"name": "kea-dhcp4", "severity": "INFO", "output-options": [{"output": "stdout"}]}
@@ -227,7 +227,7 @@ metadata:
               "http-host": "0.0.0.0",
               "http-port": 8000,
               "control-sockets": {
-                "dhcp4": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"}
+                "dhcp4": {"socket-type": "unix", "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"}
               },
               "loggers": [
                 {"name": "kea-ctrl-agent", "severity": "INFO", "output-options": [{"output": "stdout"}]}

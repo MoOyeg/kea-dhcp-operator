@@ -28,7 +28,7 @@ spec:
 
   # --- Global DHCP options ---
   option-data:
-    - name: dns-recursive-name-server
+    - name: dns-servers
       data: "2001:db8:1::dead:beef"
 
   # --- Subnets ---

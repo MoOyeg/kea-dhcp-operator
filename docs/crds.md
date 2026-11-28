@@ -186,7 +186,7 @@ The operator:
 
 **Daemon Communication:**
 - `control-sockets` — UNIX control sockets for each managed daemon:
-  - `dhcp4` — DHCPv4 server socket (e.g., `/run/kea/kea-dhcp4-ctrl.sock`)
+  - `dhcp4` — DHCPv4 server socket (e.g., `/var/run/kea/kea-dhcp4-ctrl.sock`)
   - `dhcp6` — DHCPv6 server socket
   - `d2` — DDNS server socket
 
