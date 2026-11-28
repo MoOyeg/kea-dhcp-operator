@@ -500,6 +500,35 @@ The naming components are:
 | `peers[]` | (required) | At least 2 peers (see below) |
 | `tls` | — | TLS configuration for peer communication |
 | `multi-threading` | — | HA-specific multi-threading settings |
+| `http-listener-port` | `control-socket.socket-port`, else `8000` | Port of the HA hook's dedicated listener; used in auto-generated peer URLs and the HA Services (see below) |
+
+### HA Listener Port and HTTP Control Sockets
+
+The HA hook runs its own HTTP listener for peer traffic, on all addresses.
+The operator picks its port from `high-availability.http-listener-port`,
+else from `control-socket.socket-port` (the only choice before
+`http-listener-port` existed, so existing servers keep their port), else
+`8000`.
+
+An HTTP `control-socket` on the same port works only on a loopback
+`socket-address` (Kea's default, `127.0.0.1`), where it serves clients in
+the pod, such as the Stork agent. To reach the control socket from outside
+the pod, listen on another address and give the HA listener its own port:
+
+```yaml
+  control-socket:
+    socket-type: http
+    socket-address: 0.0.0.0   # the operator's <name>-dhcp4 Service reaches it
+    socket-port: 8001
+  high-availability:
+    http-listener-port: 8000
+```
+
+The operator rejects an HTTP control socket on a non-loopback address that
+shares the HA listener's port (`ConfigurationValid=False`, `RenderError`):
+Kea would fail to start with `Address in use`. The control socket accepts
+every Kea command and the CRDs don't expose its authentication yet; restrict
+the Service with a NetworkPolicy.
 
 ### Peer Fields
 

@@ -82,6 +82,17 @@ type HAConfig struct {
 	// Multi-threading configuration.
 	// +optional
 	MultiThreading *HAMultiThreading `json:"multi-threading,omitempty"`
+
+	// Port of the HA hook's dedicated HTTP listener, which the peers connect
+	// to. The operator uses it in the peer URLs it fills in and in the HA
+	// Services. When unset, control-socket.socket-port is used, as before this
+	// field existed, and otherwise 8000. Set it when the daemon serves an HTTP
+	// control-socket beyond the pod (a socket-address other than loopback):
+	// that socket and the HA listener cannot share a port.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	HTTPListenerPort *int32 `json:"http-listener-port,omitempty"`
 }
 
 // HAPeer defines a peer in the Kea HA cluster.

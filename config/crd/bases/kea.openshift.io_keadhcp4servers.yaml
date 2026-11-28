@@ -351,6 +351,18 @@ spec:
                     description: Heartbeat interval in milliseconds.
                     format: int32
                     type: integer
+                  http-listener-port:
+                    description: |-
+                      Port of the HA hook's dedicated HTTP listener, which the peers connect
+                      to. The operator uses it in the peer URLs it fills in and in the HA
+                      Services. When unset, control-socket.socket-port is used, as before this
+                      field existed, and otherwise 8000. Set it when the daemon serves an HTTP
+                      control-socket beyond the pod (a socket-address other than loopback):
+                      that socket and the HA listener cannot share a port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
                   max-ack-delay:
                     default: 10000
                     description: Maximum time to wait for an acknowledgment in milliseconds.

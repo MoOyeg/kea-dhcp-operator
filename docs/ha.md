@@ -47,7 +47,7 @@ The operator handles:
 - **Per-ordinal ConfigMaps** — each pod gets a config with its own `this-server-name`
 - **Init container** — selects the correct config based on pod ordinal and resolves DNS hostnames to IPs in peer URLs
 - **Headless Service** — provides stable DNS names (`pod-0.svc-hl.ns.svc.cluster.local`)
-- **Dedicated HTTP listener** — when using HTTP control socket, the HA hook binds on `0.0.0.0` for peer communication while the control socket stays on `127.0.0.1`
+- **Dedicated HTTP listener** — the HA hook binds on `0.0.0.0` for peer communication, on `high-availability.http-listener-port` or, when that is unset, `control-socket.socket-port`. An HTTP control socket on the same port must stay on `127.0.0.1` (Kea's default); to reach it from outside the pod, give the HA listener its own port (see [HA Listener Port and HTTP Control Sockets](crds.md#ha-listener-port-and-http-control-sockets))
 - **Hook injection** — `libdhcp_lease_cmds.so` and `libdhcp_ha.so` are automatically added
 - **Pod anti-affinity** — HA pods are automatically spread across different nodes using preferred pod anti-affinity on `kubernetes.io/hostname`, ensuring primary and secondary peers don't share the same node (soft constraint — won't block scheduling if only one node is available)
 - **Static peer addresses** — optionally assign fixed IP addresses to each peer on the NAD interface via the `address` field on each peer
@@ -808,12 +808,21 @@ Load-balancing mode requires `primary` and `secondary` roles. The `standby` role
 
 ### `bind: Address in use` on port 8000
 
-Both the control socket and the HA hook are trying to bind on the same address/port. The operator auto-injects `http-dedicated-listener` to avoid this, but only when `control-socket.socket-type` is `http`. Verify your CR has:
+The control socket and the HA hook's listener are trying to bind the same
+address and port. The HA listener binds `0.0.0.0` on
+`high-availability.http-listener-port`, or on `control-socket.socket-port`
+when that is unset. An HTTP control socket can share that port only on a
+loopback `socket-address` (the default, `127.0.0.1`). The operator reports
+the other cases as `ConfigurationValid=False` before deploying them. Either
+leave `socket-address` unset, or give the HA listener its own port:
 
 ```yaml
 control-socket:
   socket-type: http
-  socket-port: 8000
+  socket-address: 0.0.0.0
+  socket-port: 8001
+high-availability:
+  http-listener-port: 8000
 ```
 
 ### Kea pod has no IPv4 on the NAD interface

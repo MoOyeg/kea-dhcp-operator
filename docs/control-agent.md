@@ -66,16 +66,15 @@ spend effort keeping it.
 
 ## Migrating to daemon HTTP control sockets
 
-> **On HA servers, only inside the pod, for now.** On a server with
-> `high-availability` set, the operator uses `control-socket.socket-port` as
-> the HA listener's port too. With Kea's default `socket-address`
-> (`127.0.0.1`) the two coexist, so the daemon starts, but only processes in
-> the pod (such as the Stork agent) can reach the control socket; the
-> operator's Service on that port reaches the HA listener instead. With any
-> other `socket-address`, such as `0.0.0.0`, the two bind the same port and
-> `kea-dhcp4` fails to start. Migrating API clients that run outside the pod
-> works on standalone servers only, until the operator gives the HA listener
-> its own port.
+> **On HA servers, set `high-availability.http-listener-port`.** Without
+> it, the operator uses `control-socket.socket-port` as the HA listener's
+> port too, as it always has. That works only with a loopback
+> `socket-address` (Kea's default), which leaves the control socket reachable
+> from inside the pod only. To serve API clients outside the pod, listen on
+> another address and give the HA listener its own port; see
+> [HA Listener Port and HTTP Control Sockets](crds.md#ha-listener-port-and-http-control-sockets).
+> The operator rejects the colliding combination instead of letting
+> `kea-dhcp4` fail to start.
 
 Configure an HTTP control socket on the daemon itself:
 
@@ -106,7 +105,7 @@ API clients change in two ways:
 | **HA peer traffic** | Doesn't use the Control Agent. The HA hook runs its own dedicated HTTP listener on each daemon, and peers connect to each other through the StatefulSet's headless Service. |
 | **Stork** | Doesn't use the Control Agent. The `stork-agent` sidecar runs inside each daemon pod. The e2e Stork test passes with no Control Agent deployed. |
 | **Probes** | The operator defines no probes on Kea daemon containers, so nothing to migrate. |
-| **HTTP control socket on an HA server** | **Limited today.** The operator also uses `control-socket.socket-port` as the HA listener's port. On `127.0.0.1` (the default `socket-address`) the control socket coexists with the HA listener and serves clients in the pod only. On any other address the two collide and `kea-dhcp4` 3.0.2 fails to start (`CmdHttpListener::run failed: unable to setup TCP acceptor ... Address in use`); checked with two `kea-dhcp4` 3.0.2 peers. Clients outside the pod need the HA listener on its own port first. |
+| **HTTP control socket on an HA server** | Set `high-availability.http-listener-port` to a port other than the control socket's. Checked with two `kea-dhcp4` 3.0.2 peers: control socket on `0.0.0.0:8001`, HA listener on `8100`, both reach `load-balancing` and the control socket answers from the other container. Without the field, the control socket shares the HA port and must stay on loopback (pod-local clients only); on another address the operator reports `ConfigurationValid=False`, because `kea-dhcp4` would fail with `Address in use`. |
 | **Service for the control port** | For `KeaDhcp4Server` and `KeaDhcp6Server` with an HTTP control socket, the operator creates a ClusterIP Service `<name>-dhcp4` / `<name>-dhcp6` on `socket-port`, reachable from every namespace unless a NetworkPolicy says otherwise. For `KeaDhcpDdns` it creates none; add your own if clients outside the pod need the endpoint. |
 | **Authentication and TLS** | Kea 3.0 supports both on daemon HTTP control sockets, but the CRDs don't expose those fields yet. An HTTP control socket accepts every Kea command, including configuration changes, so until they do: bind to `127.0.0.1` (the Service then reaches nothing, and only processes in the pod, such as the Stork agent, can connect), or restrict the Service's port to your API clients with a NetworkPolicy. |
 | **Your API clients** | Point them at the daemon endpoints (see above) and test every command they send. |
