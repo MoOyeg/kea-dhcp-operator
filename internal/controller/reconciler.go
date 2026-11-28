@@ -196,6 +196,27 @@ func setCondition(conditions *[]keav1alpha1.ConditionStatus, condType, status, r
 	})
 }
 
+// findCondition returns the condition of the given type, or nil.
+func findCondition(conditions []keav1alpha1.ConditionStatus, condType string) *keav1alpha1.ConditionStatus {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+// removeCondition drops the condition of the given type, if present.
+func removeCondition(conditions *[]keav1alpha1.ConditionStatus, condType string) {
+	kept := (*conditions)[:0]
+	for _, c := range *conditions {
+		if c.Type != condType {
+			kept = append(kept, c)
+		}
+	}
+	*conditions = kept
+}
+
 // resolveSecretValue reads a value from a Kubernetes Secret. The ref parameter
 // identifies the Secret by name (via LocalObjectReference), and key identifies
 // the data key within the Secret.

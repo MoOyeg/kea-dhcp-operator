@@ -1,0 +1,22 @@
+# Test fixture only: this is NOT an image the operator ships or supports.
+#
+# ISC publishes no kea-ctrl-agent container image, deprecated the Control
+# Agent in Kea 3.0 and removed it in Kea 3.2. TestCtrlAgentConfigAcceptedByKea
+# builds this image to check the operator's Control Agent renderer against
+# the real kea-ctrl-agent parser.
+#
+# BASE is the kea-dhcp4 image the tests already check, pinned by digest. The
+# package comes from ISC's repository for that Kea release, pinned to the
+# exact build of the Kea libraries already in BASE, so a given BASE digest
+# always yields the same kea-ctrl-agent.
+ARG BASE
+FROM ${BASE}
+USER 0
+RUN set -eu; \
+    version=$(apk list --installed isc-kea-common | cut -d' ' -f1 | sed 's/^isc-kea-common-//'); \
+    series=$(echo "$version" | cut -d. -f1,2 | tr . -); \
+    alpine=$(cut -d. -f1,2 /etc/alpine-release); \
+    echo "https://dl.cloudsmith.io/public/isc/kea-${series}/alpine/v${alpine}/main" >> /etc/apk/repositories; \
+    apk add --no-cache "isc-kea-ctrl-agent=${version}"; \
+    /usr/sbin/kea-ctrl-agent -V
+LABEL io.openshift.kea.test-fixture="true"

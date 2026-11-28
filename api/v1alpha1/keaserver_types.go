@@ -33,6 +33,9 @@ type KeaServerSpec struct {
 	Dhcp6 *KeaDhcp6ServerSpec `json:"dhcp6,omitempty"`
 
 	// Control Agent configuration. When set, creates a KeaControlAgent.
+	// The field is deprecated: ISC removed the Kea Control Agent in Kea 3.2; use the
+	// daemons' HTTP control sockets (see docs/control-agent.md).
+	// container.image is required.
 	// +optional
 	ControlAgent *KeaControlAgentSpec `json:"controlAgent,omitempty"`
 

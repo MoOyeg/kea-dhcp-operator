@@ -46,7 +46,7 @@ spec:
   # --- Control socket (required for HA peer communication) ---
   control-socket:
     socket-type: unix
-    socket-name: /run/kea/kea-dhcp4-ctrl.sock
+    socket-name: /var/run/kea/kea-dhcp4-ctrl.sock
 
   # --- High Availability ---
   high-availability:

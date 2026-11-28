@@ -29,6 +29,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: kea.openshift.io/v1alpha1 KeaControlAgent is deprecated and
+      cannot reach daemons in other pods; it has no default image (set spec.container.image).
+      Use the daemons' HTTP control sockets; see docs/control-agent.md
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -36,6 +40,10 @@ spec:
           KeaControlAgent is the Schema for the keacontrolagents API.
           It manages a Kea Control Agent deployment that provides a REST API
           for managing Kea DHCP servers.
+
+          The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
+          in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
+          docs/control-agent.md.
         properties:
           apiVersion:
             description: |-
@@ -55,8 +63,12 @@ spec:
           metadata:
             type: object
           spec:
-            description: KeaControlAgentSpec defines the desired state of a Kea Control
-              Agent deployment.
+            description: |-
+              KeaControlAgentSpec defines the desired state of a Kea Control Agent deployment.
+              container.image is required: ISC publishes no Kea Control Agent image. The
+              operator, not the CRD, enforces this (status reason ImageRequired). A CRD
+              rule would also reject the operator's status writes to objects stored before
+              the rule existed, on Kubernetes before 1.33.
             properties:
               authentication:
                 description: Authentication configuration for the REST API.
@@ -125,12 +137,15 @@ spec:
                     type: string
                 type: object
               container:
-                description: Container configuration (image, resources, pull policy).
+                description: |-
+                  Container configuration (image, resources, pull policy). container.image
+                  is required: ISC publishes no Kea Control Agent image.
                 properties:
                   image:
                     description: |-
                       Container image override. Defaults to the per-component ISC Kea image
-                      (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                      (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                      and requires it: ISC publishes no Kea Control Agent image.
                     type: string
                   imagePullPolicy:
                     description: Image pull policy.

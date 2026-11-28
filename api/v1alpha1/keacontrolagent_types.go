@@ -24,6 +24,8 @@ import (
 // ========== Control Agent Types ==========
 
 // AgentControlSockets defines the UNIX control sockets for each managed Kea daemon.
+// The Kea Control Agent only reaches daemons over UNIX sockets; the operator
+// reports any other socket type as UnsupportedControlSocket.
 type AgentControlSockets struct {
 	// Control socket for the DHCPv4 server.
 	// +optional
@@ -72,9 +74,13 @@ type AuthClient struct {
 // ========== KeaControlAgent Spec ==========
 
 // KeaControlAgentSpec defines the desired state of a Kea Control Agent deployment.
+// container.image is required: ISC publishes no Kea Control Agent image. The
+// operator, not the CRD, enforces this (status reason ImageRequired). A CRD
+// rule would also reject the operator's status writes to objects stored before
+// the rule existed, on Kubernetes before 1.33.
 type KeaControlAgentSpec struct {
-	// Container configuration (image, resources, pull policy).
-	// +optional
+	// Container configuration (image, resources, pull policy). container.image
+	// is required: ISC publishes no Kea Control Agent image.
 	Container ContainerConfig `json:"container,omitempty"`
 
 	// Number of replicas.
@@ -134,6 +140,11 @@ type KeaControlAgentStatus struct {
 // KeaControlAgent is the Schema for the keacontrolagents API.
 // It manages a Kea Control Agent deployment that provides a REST API
 // for managing Kea DHCP servers.
+//
+// The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
+// in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
+// docs/control-agent.md.
+// +kubebuilder:deprecatedversion:warning="kea.openshift.io/v1alpha1 KeaControlAgent is deprecated and cannot reach daemons in other pods; it has no default image (set spec.container.image). Use the daemons' HTTP control sockets; see docs/control-agent.md"
 type KeaControlAgent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

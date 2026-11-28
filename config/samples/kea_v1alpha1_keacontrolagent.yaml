@@ -1,3 +1,9 @@
+# DEPRECATED: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it in
+# Kea 3.2, and publishes no Control Agent image. Prefer an HTTP control-socket
+# on each daemon; see docs/control-agent.md. The operator-managed agent runs in
+# its own pod and cannot reach the daemons' control sockets, so this deploys an
+# agent that cannot forward commands. This sample is not offered in the
+# OperatorHub examples; it documents the remaining KeaControlAgent support.
 apiVersion: kea.openshift.io/v1alpha1
 kind: KeaControlAgent
 metadata:
@@ -6,6 +12,11 @@ metadata:
     app.kubernetes.io/name: ocp-kea-dhcp
     app.kubernetes.io/managed-by: kustomize
 spec:
+  # Required: there is no default image. Replace with an image you build and
+  # maintain (docs/control-agent.md has a recipe).
+  container:
+    image: quay.io/example/kea-ctrl-agent:3.0.2
+
   http-host: "0.0.0.0"
   http-port: 8000
 
@@ -13,10 +24,10 @@ spec:
   control-sockets:
     dhcp4:
       socket-type: unix
-      socket-name: /run/kea/kea-dhcp4-ctrl.sock
+      socket-name: /var/run/kea/kea-dhcp4-ctrl.sock
     dhcp6:
       socket-type: unix
-      socket-name: /run/kea/kea-dhcp6-ctrl.sock
+      socket-name: /var/run/kea/kea-dhcp6-ctrl.sock
 
   # --- Logging ---
   loggers:

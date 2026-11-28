@@ -67,7 +67,7 @@ metadata:
             },
             "control-socket": {
               "socket-type": "unix",
-              "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"
+              "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"
             },
             "high-availability": {
               "mode": "load-balancing",
@@ -114,7 +114,7 @@ metadata:
               "persist": true
             },
             "option-data": [
-              {"name": "dns-recursive-name-server", "data": "2001:db8:1::dead:beef"}
+              {"name": "dns-servers", "data": "2001:db8:1::dead:beef"}
             ],
             "subnet6": [
               {
@@ -126,24 +126,6 @@ metadata:
             ],
             "loggers": [
               {"name": "kea-dhcp6", "severity": "INFO", "output-options": [{"output": "stdout"}]}
-            ]
-          }
-        },
-        {
-          "apiVersion": "kea.openshift.io/v1alpha1",
-          "kind": "KeaControlAgent",
-          "metadata": {
-            "name": "ca-example"
-          },
-          "spec": {
-            "http-host": "0.0.0.0",
-            "http-port": 8000,
-            "control-sockets": {
-              "dhcp4": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"},
-              "dhcp6": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp6-ctrl.sock"}
-            },
-            "loggers": [
-              {"name": "kea-ctrl-agent", "severity": "INFO", "output-options": [{"output": "stdout"}]}
             ]
           }
         },
@@ -217,20 +199,10 @@ metadata:
               ],
               "control-socket": {
                 "socket-type": "unix",
-                "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"
+                "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock"
               },
               "loggers": [
                 {"name": "kea-dhcp4", "severity": "INFO", "output-options": [{"output": "stdout"}]}
-              ]
-            },
-            "controlAgent": {
-              "http-host": "0.0.0.0",
-              "http-port": 8000,
-              "control-sockets": {
-                "dhcp4": {"socket-type": "unix", "socket-name": "/run/kea/kea-dhcp4-ctrl.sock"}
-              },
-              "loggers": [
-                {"name": "kea-ctrl-agent", "severity": "INFO", "output-options": [{"output": "stdout"}]}
               ]
             }
           }
@@ -282,6 +254,10 @@ spec:
         KeaControlAgent is the Schema for the keacontrolagents API.
         It manages a Kea Control Agent deployment that provides a REST API
         for managing Kea DHCP servers.
+
+        The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
+        in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
+        docs/control-agent.md.
       displayName: Kea Control Agent
       kind: KeaControlAgent
       name: keacontrolagents.kea.openshift.io
@@ -341,7 +317,7 @@ spec:
     |-----|-------------|
     | `KeaDhcp4Server` | DHCPv4 server with subnets, pools, and reservations |
     | `KeaDhcp6Server` | DHCPv6 server with prefix delegation |
-    | `KeaControlAgent` | REST API management agent |
+    | `KeaControlAgent` | REST API management agent (deprecated: ISC removed the Kea Control Agent in Kea 3.2; requires `container.image`) |
     | `KeaDhcpDdns` | Dynamic DNS update service |
     | `KeaServer` | Umbrella resource for deploying multiple components |
 

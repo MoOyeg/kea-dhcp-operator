@@ -69,3 +69,28 @@ jobs:
         if: always()
         run: |
           { echo '### Kea images checked'; grep -o 'Kea image: .*' kea-parser.log | sort -u; } >> "$GITHUB_STEP_SUMMARY"
+
+  envtest-versions:
+    name: Controller envtest on Kubernetes ${{ matrix.k8s }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.28: the CSV's minKubeVersion (OperatorHub.io). 1.31: OpenShift
+        # 4.18, the oldest release in com.redhat.openshift.versions. 1.35: a
+        # current release. make test covers ENVTEST_K8S_VERSION. The CRD
+        # upgrade specs in internal/controller behave differently before 1.33,
+        # where CRD rules also apply to status writes.
+        k8s: ["1.28.0", "1.31.0", "1.35.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # setup-envtest prints the path under --bin-dir as given; go test runs
+      # in the package directory, so it must be absolute.
+      - name: Controller suite
+        run: |
+          make envtest
+          KUBEBUILDER_ASSETS="$(bin/setup-envtest use ${{ matrix.k8s }} --bin-dir "$PWD/bin" -p path)" \
+            go test ./internal/controller/ -count=1

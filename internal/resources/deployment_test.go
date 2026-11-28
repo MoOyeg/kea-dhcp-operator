@@ -42,7 +42,6 @@ func TestBuildDeploymentDefaultImages(t *testing.T) {
 	}{
 		{ComponentDhcp4, DefaultKeaDhcp4Image},
 		{ComponentDhcp6, DefaultKeaDhcp6Image},
-		{ComponentCtrlAgent, DefaultKeaCtrlAgentImage},
 		{ComponentDdns, DefaultKeaDhcpDdnsImage},
 	}
 	for _, tc := range tests {
@@ -89,8 +88,9 @@ func TestDefaultImageForComponent(t *testing.T) {
 	}{
 		{ComponentDhcp4, DefaultKeaDhcp4Image},
 		{ComponentDhcp6, DefaultKeaDhcp6Image},
-		{ComponentCtrlAgent, DefaultKeaCtrlAgentImage},
 		{ComponentDdns, DefaultKeaDhcpDdnsImage},
+		// ISC publishes no Kea Control Agent image: there is no default.
+		{ComponentCtrlAgent, ""},
 		{"unknown", ""},
 	}
 	for _, tc := range tests {

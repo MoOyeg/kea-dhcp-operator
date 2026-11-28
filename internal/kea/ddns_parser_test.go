@@ -17,51 +17,11 @@ limitations under the License.
 package kea
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
-
-	"sigs.k8s.io/yaml"
 
 	keav1alpha1 "github.com/openshift/ocp-kea-dhcp/api/v1alpha1"
 	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
-
-// loadSample reads a CR from config/samples into obj.
-func loadSample(t *testing.T, file string, obj interface{}) {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "config", "samples", file))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := yaml.Unmarshal(data, obj); err != nil {
-		t.Fatalf("parsing %s: %v", file, err)
-	}
-}
-
-// keaParserAccepts runs `<binary> -t` from image on data and fails the test
-// if Kea rejects the configuration or logs an error while checking it.
-func keaParserAccepts(t *testing.T, k keaContainers, image, binary string, data []byte) {
-	t.Helper()
-	dir := t.TempDir()
-	cfg := binary + ".conf"
-	if err := os.WriteFile(filepath.Join(dir, cfg), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The Kea binaries may carry file capabilities, so the container needs them to exec.
-	out, err := exec.Command(k.podman, "run", "--rm",
-		"--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
-		"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/"+binary,
-		image, "-t", "/cfg/"+cfg).CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s -t rejected the rendered config: %v\n%s\n--- config ---\n%s", binary, err, out, data)
-	}
-	if strings.Contains(string(out), "ERROR") {
-		t.Fatalf("%s -t logged an error:\n%s\n--- config ---\n%s", binary, out, data)
-	}
-}
 
 // TestDdnsConfigAcceptedByKea feeds rendered DHCP-DDNS configurations (the
 // shipped sample, and TSIG keys with every algorithm form, NCR settings and

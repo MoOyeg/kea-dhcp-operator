@@ -584,7 +584,8 @@ type PodPlacement struct {
 // ContainerConfig defines container-level settings for Kea daemons.
 type ContainerConfig struct {
 	// Container image override. Defaults to the per-component ISC Kea image
-	// (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+	// (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+	// and requires it: ISC publishes no Kea Control Agent image.
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -710,6 +711,10 @@ const (
 	// replacement of the pods: True with a database lease backend or a
 	// persistent lease volume, False with memfile leases in an emptyDir.
 	ConditionTypeLeasesDurable = "LeasesDurable"
+
+	// ConditionTypeDeprecated is True on a resource kind the operator will
+	// stop supporting; the message says what to use instead.
+	ConditionTypeDeprecated = "Deprecated"
 )
 
 const (

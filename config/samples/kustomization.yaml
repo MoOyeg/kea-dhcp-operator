@@ -2,7 +2,6 @@
 resources:
 - kea_v1alpha1_keadhcp4server.yaml
 - kea_v1alpha1_keadhcp6server.yaml
-- kea_v1alpha1_keacontrolagent.yaml
 - kea_v1alpha1_keadhcpddns.yaml
 - kea_v1alpha1_keaserver.yaml
 - kea_v1alpha1_keadhcp4server_ha.yaml

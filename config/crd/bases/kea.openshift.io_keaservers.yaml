@@ -70,7 +70,11 @@ spec:
               operator to create the corresponding component CRD.
             properties:
               controlAgent:
-                description: Control Agent configuration. When set, creates a KeaControlAgent.
+                description: |-
+                  Control Agent configuration. When set, creates a KeaControlAgent.
+                  The field is deprecated: ISC removed the Kea Control Agent in Kea 3.2; use the
+                  daemons' HTTP control sockets (see docs/control-agent.md).
+                  container.image is required.
                 properties:
                   authentication:
                     description: Authentication configuration for the REST API.
@@ -141,12 +145,15 @@ spec:
                         type: string
                     type: object
                   container:
-                    description: Container configuration (image, resources, pull policy).
+                    description: |-
+                      Container configuration (image, resources, pull policy). container.image
+                      is required: ISC publishes no Kea Control Agent image.
                     properties:
                       image:
                         description: |-
                           Container image override. Defaults to the per-component ISC Kea image
-                          (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                          (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                          and requires it: ISC publishes no Kea Control Agent image.
                         type: string
                       imagePullPolicy:
                         description: Image pull policy.
@@ -1492,7 +1499,8 @@ spec:
                       image:
                         description: |-
                           Container image override. Defaults to the per-component ISC Kea image
-                          (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                          (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                          and requires it: ISC publishes no Kea Control Agent image.
                         type: string
                       imagePullPolicy:
                         description: Image pull policy.
@@ -4793,7 +4801,8 @@ spec:
                       image:
                         description: |-
                           Container image override. Defaults to the per-component ISC Kea image
-                          (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                          (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                          and requires it: ISC publishes no Kea Control Agent image.
                         type: string
                       imagePullPolicy:
                         description: Image pull policy.
@@ -8163,7 +8172,8 @@ spec:
                       image:
                         description: |-
                           Container image override. Defaults to the per-component ISC Kea image
-                          (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                          (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                          and requires it: ISC publishes no Kea Control Agent image.
                         type: string
                       imagePullPolicy:
                         description: Image pull policy.
@@ -9506,7 +9516,8 @@ spec:
                       image:
                         description: |-
                           Container image override. Defaults to the per-component ISC Kea image
-                          (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                          (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                          and requires it: ISC publishes no Kea Control Agent image.
                         type: string
                       imagePullPolicy:
                         description: Image pull policy.
