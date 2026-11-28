@@ -48,7 +48,7 @@ Manages a **Kea DHCPv4 server** (`kea-dhcp4` daemon).
 - PXE boot parameters (`next-server`, `boot-file-name`)
 
 **Deployment:**
-- `container.image` — override the default per-component Kea container image (defaults: `kea-dhcp4`, `kea-dhcp6`, `kea-ctrl-agent`, `kea-dhcp-ddns` from `docker.cloudsmith.io/isc/docker/`)
+- `container.image` — override the default per-component Kea container image (defaults: `kea-dhcp4`, `kea-dhcp6`, `kea-dhcp-ddns` from `docker.cloudsmith.io/isc/docker/`). `KeaControlAgent` has no default and requires it.
 - `replicas` — number of pods (set to 2 for HA)
 - `hostNetwork` — enable host networking for direct L2 access
 - `placement` — nodeSelector, tolerations, affinity
@@ -160,14 +160,20 @@ All other fields (database, hooks, HA, logging, container settings) are identica
 
 ## KeaControlAgent (kca)
 
+> **Deprecated.** ISC deprecated the Kea Control Agent in Kea 3.0, removed it
+> in Kea 3.2, and publishes no Control Agent image, so `container.image` is
+> required. Use an HTTP `control-socket` on each daemon instead. See
+> [control-agent.md](control-agent.md) for the upgrade notes and the
+> migration checklist.
+
 Manages the **Kea Control Agent** (`kea-ctrl-agent` daemon).
 
 ### What It Does
 
-The Control Agent exposes a RESTful HTTP API for managing Kea daemons. It is required for:
-- HA peer communication between DHCP servers
-- Remote management and monitoring
-- Sending configuration and lease commands
+The Control Agent exposes a RESTful HTTP API and forwards commands to Kea
+daemons over UNIX sockets. HA peers and the Stork agent do not use it, and
+in this operator it runs in its own pod, which cannot reach the daemons'
+sockets (see [control-agent.md](control-agent.md)).
 
 The operator:
 - Renders `kea-ctrl-agent.conf`
@@ -175,6 +181,9 @@ The operator:
 - Always creates a Service exposing the HTTP port
 
 ### Key Spec Fields
+
+**Image (required):**
+- `container.image` — an image you build and maintain; there is no default
 
 **HTTP Endpoint:**
 - `http-host` — listen address (default: `"0.0.0.0"`)
@@ -185,7 +194,7 @@ The operator:
 - `tls.certRequired` — whether client certificates are required
 
 **Daemon Communication:**
-- `control-sockets` — UNIX control sockets for each managed daemon:
+- `control-sockets` — UNIX control sockets for each managed daemon (`socket-type: unix` only):
   - `dhcp4` — DHCPv4 server socket (e.g., `/var/run/kea/kea-dhcp4-ctrl.sock`)
   - `dhcp6` — DHCPv6 server socket
   - `d2` — DDNS server socket
@@ -195,23 +204,6 @@ The operator:
 - `authentication.realm` — auth realm
 - `authentication.clients[]` — inline credentials (user/password)
 - `authentication.credentialsSecretRef` — reference to a Secret with credentials
-
-### Relationship to Other Components
-
-The Control Agent acts as a gateway to other Kea daemons. In a typical deployment:
-
-```
-External Client → KeaControlAgent (HTTP :8000)
-                    → kea-dhcp4 (unix socket)
-                    → kea-dhcp6 (unix socket)
-                    → kea-dhcp-ddns (unix socket)
-```
-
-For HA, each DHCP server's partner communicates through the Control Agent:
-
-```
-Server1 kea-dhcp4 → Server2 KeaControlAgent → Server2 kea-dhcp4
-```
 
 ---
 
@@ -295,7 +287,7 @@ spec:
     <KeaDhcp4ServerSpec>
   dhcp6:          # Creates KeaDhcp6Server "my-kea-dhcp6"
     <KeaDhcp6ServerSpec>
-  controlAgent:   # Creates KeaControlAgent "my-kea-ctrl-agent"
+  controlAgent:   # Deprecated; creates KeaControlAgent "my-kea-ctrl-agent"
     <KeaControlAgentSpec>
   dhcpDdns:       # Creates KeaDhcpDdns "my-kea-ddns"
     <KeaDhcpDdnsSpec>

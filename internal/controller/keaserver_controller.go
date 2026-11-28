@@ -229,6 +229,8 @@ func (r *KeaServerReconciler) reconcileControlAgent(ctx context.Context, server 
 		return client.IgnoreNotFound(err)
 	}
 
+	r.Recorder.Event(server, corev1.EventTypeWarning, reasonControlAgentDeprecated,
+		"spec.controlAgent is deprecated: "+ctrlAgentDeprecatedMessage)
 	child := &keav1alpha1.KeaControlAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      childName,

@@ -13,7 +13,7 @@ The Kea DHCP Operator is a Kubernetes/OpenShift operator built with Operator SDK
 |-----|------------|-------------|
 | `KeaDhcp4Server` | `kd4` | DHCPv4 server |
 | `KeaDhcp6Server` | `kd6` | DHCPv6 server |
-| `KeaControlAgent` | `kca` | REST API management agent |
+| `KeaControlAgent` | `kca` | REST API management agent (deprecated, see [control-agent.md](control-agent.md)) |
 | `KeaDhcpDdns` | `kdd` | Dynamic DNS update service |
 | `KeaServer` | `ks` | Umbrella — creates child CRDs for any combination of the above |
 
@@ -207,7 +207,7 @@ The operator uses separate Kea container images for each daemon type rather than
 |-----------|--------------|
 | DHCPv4 | `docker.cloudsmith.io/isc/docker/kea-dhcp4:3.0.2` |
 | DHCPv6 | `docker.cloudsmith.io/isc/docker/kea-dhcp6:3.0.2` |
-| Control Agent | `docker.cloudsmith.io/isc/docker/kea-ctrl-agent:3.0.2` |
+| Control Agent | none: `container.image` is required (ISC publishes no image; deprecated, see [control-agent.md](control-agent.md)) |
 | DHCP-DDNS | `docker.cloudsmith.io/isc/docker/kea-dhcp-ddns:3.0.2` |
 
 Each image can be overridden via the `container.image` field in the CR spec.

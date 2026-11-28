@@ -24,6 +24,8 @@ import (
 // ========== Control Agent Types ==========
 
 // AgentControlSockets defines the UNIX control sockets for each managed Kea daemon.
+// The Kea Control Agent only reaches daemons over UNIX sockets.
+// +kubebuilder:validation:XValidation:rule="(!has(self.dhcp4) || self.dhcp4.socket__dash__type == 'unix') && (!has(self.dhcp6) || self.dhcp6.socket__dash__type == 'unix') && (!has(self.d2) || self.d2.socket__dash__type == 'unix')",message="the Kea Control Agent only reaches daemons over UNIX sockets: set socket-type: unix (for HTTP, configure the daemon's own control-socket instead; see docs/control-agent.md)"
 type AgentControlSockets struct {
 	// Control socket for the DHCPv4 server.
 	// +optional
@@ -72,9 +74,10 @@ type AuthClient struct {
 // ========== KeaControlAgent Spec ==========
 
 // KeaControlAgentSpec defines the desired state of a Kea Control Agent deployment.
+// +kubebuilder:validation:XValidation:rule="has(self.container) && has(self.container.image) && size(self.container.image) > 0",message="container.image is required: ISC publishes no Kea Control Agent image, so the operator has no default (the Control Agent is deprecated; see docs/control-agent.md)"
 type KeaControlAgentSpec struct {
-	// Container configuration (image, resources, pull policy).
-	// +optional
+	// Container configuration (image, resources, pull policy). container.image
+	// is required: ISC publishes no Kea Control Agent image.
 	Container ContainerConfig `json:"container,omitempty"`
 
 	// Number of replicas.
@@ -134,6 +137,11 @@ type KeaControlAgentStatus struct {
 // KeaControlAgent is the Schema for the keacontrolagents API.
 // It manages a Kea Control Agent deployment that provides a REST API
 // for managing Kea DHCP servers.
+//
+// The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
+// in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
+// docs/control-agent.md.
+// +kubebuilder:deprecatedversion:warning="kea.openshift.io/v1alpha1 KeaControlAgent is deprecated: ISC removed the Kea Control Agent in Kea 3.2. Use the daemons' HTTP control sockets; see docs/control-agent.md"
 type KeaControlAgent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

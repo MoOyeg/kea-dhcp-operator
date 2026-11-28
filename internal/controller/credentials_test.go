@@ -445,6 +445,7 @@ func TestCredentialComponentsStampRevisionAndWatchTheirSecrets(t *testing.T) {
 		{
 			name: "KeaControlAgent", component: "ctrl-agent",
 			cr: &keav1alpha1.KeaControlAgent{ObjectMeta: meta, Spec: keav1alpha1.KeaControlAgentSpec{
+				Container: keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
 				Authentication: &keav1alpha1.AuthConfig{Type: "basic", Clients: []keav1alpha1.AuthClient{
 					{User: "admin", PasswordSecretKeyRef: keyRef(testCredSecret)},
 					{User: "viewer", PasswordSecretKeyRef: keyRef(testOtherSecret)},

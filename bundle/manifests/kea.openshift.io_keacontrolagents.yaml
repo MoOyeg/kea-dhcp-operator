@@ -29,6 +29,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: 'kea.openshift.io/v1alpha1 KeaControlAgent is deprecated:
+      ISC removed the Kea Control Agent in Kea 3.2. Use the daemons'' HTTP control
+      sockets; see docs/control-agent.md'
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -36,6 +40,10 @@ spec:
           KeaControlAgent is the Schema for the keacontrolagents API.
           It manages a Kea Control Agent deployment that provides a REST API
           for managing Kea DHCP servers.
+
+          The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
+          in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
+          docs/control-agent.md.
         properties:
           apiVersion:
             description: |-
@@ -125,12 +133,15 @@ spec:
                     type: string
                 type: object
               container:
-                description: Container configuration (image, resources, pull policy).
+                description: |-
+                  Container configuration (image, resources, pull policy). container.image
+                  is required: ISC publishes no Kea Control Agent image.
                 properties:
                   image:
                     description: |-
                       Container image override. Defaults to the per-component ISC Kea image
-                      (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                      (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                      and requires it: ISC publishes no Kea Control Agent image.
                     type: string
                   imagePullPolicy:
                     description: Image pull policy.
@@ -297,6 +308,13 @@ spec:
                     - socket-type
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: 'the Kea Control Agent only reaches daemons over UNIX sockets:
+                    set socket-type: unix (for HTTP, configure the daemon''s own control-socket
+                    instead; see docs/control-agent.md)'
+                  rule: (!has(self.dhcp4) || self.dhcp4.socket__dash__type == 'unix')
+                    && (!has(self.dhcp6) || self.dhcp6.socket__dash__type == 'unix')
+                    && (!has(self.d2) || self.d2.socket__dash__type == 'unix')
               hooks-libraries:
                 description: Hook libraries to load.
                 items:
@@ -1387,6 +1405,12 @@ spec:
                 - secretRef
                 type: object
             type: object
+            x-kubernetes-validations:
+            - message: 'container.image is required: ISC publishes no Kea Control
+                Agent image, so the operator has no default (the Control Agent is
+                deprecated; see docs/control-agent.md)'
+              rule: has(self.container) && has(self.container.image) && size(self.container.image)
+                > 0
           status:
             description: KeaControlAgentStatus defines the observed state of KeaControlAgent.
             properties:

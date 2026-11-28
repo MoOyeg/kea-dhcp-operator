@@ -6,7 +6,7 @@ A Kubernetes/OpenShift operator for managing [ISC Kea DHCP](https://www.isc.org/
 
 - **DHCPv4** and **DHCPv6** servers with full subnet, pool, reservation, and option support
 - **High Availability** with automatic StatefulSet orchestration and hook injection
-- **Control Agent** and **DHCP-DDNS** for REST management and dynamic DNS
+- **DHCP-DDNS** for dynamic DNS, and the deprecated **Control Agent** (see [docs/control-agent.md](docs/control-agent.md))
 - **Umbrella resource** (`KeaServer`) to deploy any combination of components in a single CR
 - **Network Attachment Definitions (NADs)** for multi-network DHCP on secondary interfaces
 - **MySQL/PostgreSQL** lease database backends with secret-based credential management

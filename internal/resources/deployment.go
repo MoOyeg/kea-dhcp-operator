@@ -27,10 +27,9 @@ import (
 
 // Default per-component images for Kea deployments.
 const (
-	DefaultKeaDhcp4Image     = "docker.cloudsmith.io/isc/docker/kea-dhcp4:3.0.2"
-	DefaultKeaDhcp6Image     = "docker.cloudsmith.io/isc/docker/kea-dhcp6:3.0.2"
-	DefaultKeaCtrlAgentImage = "docker.cloudsmith.io/isc/docker/kea-ctrl-agent:3.0.2"
-	DefaultKeaDhcpDdnsImage  = "docker.cloudsmith.io/isc/docker/kea-dhcp-ddns:3.0.2"
+	DefaultKeaDhcp4Image    = "docker.cloudsmith.io/isc/docker/kea-dhcp4:3.0.2"
+	DefaultKeaDhcp6Image    = "docker.cloudsmith.io/isc/docker/kea-dhcp6:3.0.2"
+	DefaultKeaDhcpDdnsImage = "docker.cloudsmith.io/isc/docker/kea-dhcp-ddns:3.0.2"
 )
 
 // Volume/mount constants for Kea deployments.
@@ -84,10 +83,11 @@ const (
 
 // defaultComponentImage maps a component name to its default container image.
 var defaultComponentImage = map[string]string{
-	ComponentDhcp4:     DefaultKeaDhcp4Image,
-	ComponentDhcp6:     DefaultKeaDhcp6Image,
-	ComponentCtrlAgent: DefaultKeaCtrlAgentImage,
-	ComponentDdns:      DefaultKeaDhcpDdnsImage,
+	ComponentDhcp4: DefaultKeaDhcp4Image,
+	ComponentDhcp6: DefaultKeaDhcp6Image,
+	// No Control Agent entry: ISC publishes no Kea Control Agent image, so a
+	// KeaControlAgent must name one (the CRD and the controller enforce it).
+	ComponentDdns: DefaultKeaDhcpDdnsImage,
 }
 
 // defaultComponentCommand maps a component name to the absolute path of the

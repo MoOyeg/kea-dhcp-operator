@@ -39,17 +39,3 @@ spec:
         severity: INFO
         output-options:
           - output: stdout
-
-  # --- Control Agent component ---
-  controlAgent:
-    http-host: "0.0.0.0"
-    http-port: 8000
-    control-sockets:
-      dhcp4:
-        socket-type: unix
-        socket-name: /var/run/kea/kea-dhcp4-ctrl.sock
-    loggers:
-      - name: kea-ctrl-agent
-        severity: INFO
-        output-options:
-          - output: stdout

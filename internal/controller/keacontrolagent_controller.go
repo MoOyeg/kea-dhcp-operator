@@ -70,6 +70,18 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	logger.Info("reconciling KeaControlAgent", "name", agent.Name)
 
+	// The Control Agent is deprecated and has no default image. The CRD
+	// rejects new objects without an image or with non-UNIX sockets; objects
+	// created before it did are stopped here, leaving their workload alone.
+	setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeDeprecated, "True",
+		reasonControlAgentDeprecated, ctrlAgentDeprecatedMessage)
+	if reason, msg := ctrlAgentSpecProblem(&agent.Spec); reason != "" {
+		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", reason, msg)
+		agent.Status.Phase = keav1alpha1.PhaseError
+		r.Recorder.Event(agent, corev1.EventTypeWarning, reason, msg)
+		return ctrl.Result{}, r.Status().Update(ctx, agent)
+	}
+
 	// 2. Build env var references for auth credentials.
 	renderer := kea.NewCtrlAgentConfigRenderer(&agent.Spec)
 	var secretEnvVars []corev1.EnvVar
@@ -270,4 +282,31 @@ func (r *KeaControlAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			enqueueReferencingCRs(mgr.GetClient(), listCtrlAgentSecretRefs),
 			enqueueControllingCR("KeaControlAgent")))).
 		Complete(r)
+}
+
+const (
+	reasonControlAgentDeprecated = "ControlAgentRemovedUpstream"
+	ctrlAgentDeprecatedMessage   = "ISC deprecated the Kea Control Agent in Kea 3.0 and removed it in Kea 3.2; " +
+		"configure an HTTP control-socket on each daemon instead (see docs/control-agent.md)"
+)
+
+// ctrlAgentSpecProblem returns a ConfigurationValid reason and message when
+// the spec cannot run: no image (ISC publishes none, so there is no default),
+// or a control socket that is not UNIX (the Control Agent reaches daemons
+// only over UNIX sockets).
+func ctrlAgentSpecProblem(spec *keav1alpha1.KeaControlAgentSpec) (reason, message string) {
+	if spec.Container.Image == "" {
+		return "ImageRequired", "spec.container.image is required: ISC publishes no Kea Control Agent image, " +
+			"so the operator has no default; set an image you maintain or migrate (see docs/control-agent.md)"
+	}
+	if s := spec.ControlSockets; s != nil {
+		for i, cs := range []*keav1alpha1.ControlSocket{s.Dhcp4, s.Dhcp6, s.D2} {
+			field := [...]string{"control-sockets.dhcp4", "control-sockets.dhcp6", "control-sockets.d2"}[i]
+			if cs != nil && cs.SocketType != "unix" {
+				return "UnsupportedControlSocket", fmt.Sprintf("%s: the Kea Control Agent only reaches daemons over "+
+					"UNIX sockets (socket-type %q); for HTTP configure the daemon's own control-socket", field, cs.SocketType)
+			}
+		}
+	}
+	return "", ""
 }

@@ -58,7 +58,8 @@ spec:
                   image:
                     description: |-
                       Container image override. Defaults to the per-component ISC Kea image
-                      (e.g., kea-dhcp4, kea-dhcp6, kea-ctrl-agent, kea-dhcp-ddns).
+                      (kea-dhcp4, kea-dhcp6, kea-dhcp-ddns). KeaControlAgent has no default
+                      and requires it: ISC publishes no Kea Control Agent image.
                     type: string
                   imagePullPolicy:
                     description: Image pull policy.

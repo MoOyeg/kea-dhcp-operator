@@ -52,7 +52,9 @@ var _ = Describe("KeaControlAgent Controller", func() {
 						Name:      resourceName,
 						Namespace: testNamespaceDefault,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: keav1alpha1.KeaControlAgentSpec{
+						Container: keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -82,5 +84,50 @@ var _ = Describe("KeaControlAgent Controller", func() {
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
+	})
+})
+
+// The CRD carries the rules, so the API server rejects a Control Agent that
+// cannot run before the operator sees it, also under KeaServer.spec.controlAgent.
+var _ = Describe("KeaControlAgent validation", func() {
+	ctx := context.Background()
+	meta := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: name, Namespace: testNamespaceDefault}
+	}
+	unix := &keav1alpha1.ControlSocket{SocketType: "unix", SocketName: "/var/run/kea/kea-dhcp4-ctrl.sock"}
+	port := int32(8001)
+	http := &keav1alpha1.ControlSocket{SocketType: testSocketTypeHTTP, SocketPort: &port}
+
+	It("rejects a KeaControlAgent without an image, naming the reason", func() {
+		err := k8sClient.Create(ctx, &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-no-image")})
+		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
+		Expect(err.Error()).To(ContainSubstring("ISC publishes no Kea Control Agent image"))
+	})
+
+	It("rejects a non-UNIX control socket", func() {
+		err := k8sClient.Create(ctx, &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-http"),
+			Spec: keav1alpha1.KeaControlAgentSpec{
+				Container:      keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
+				ControlSockets: &keav1alpha1.AgentControlSockets{Dhcp4: unix, D2: http},
+			}})
+		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
+		Expect(err.Error()).To(ContainSubstring("only reaches daemons over UNIX sockets"))
+	})
+
+	It("accepts an explicit image with UNIX sockets", func() {
+		kca := &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-ok"),
+			Spec: keav1alpha1.KeaControlAgentSpec{
+				Container:      keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
+				ControlSockets: &keav1alpha1.AgentControlSockets{Dhcp4: unix},
+			}}
+		Expect(k8sClient.Create(ctx, kca)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, kca)).To(Succeed())
+	})
+
+	It("rejects KeaServer.spec.controlAgent without an image", func() {
+		err := k8sClient.Create(ctx, &keav1alpha1.KeaServer{ObjectMeta: meta("ks-no-image"),
+			Spec: keav1alpha1.KeaServerSpec{ControlAgent: &keav1alpha1.KeaControlAgentSpec{}}})
+		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
+		Expect(err.Error()).To(ContainSubstring("ISC publishes no Kea Control Agent image"))
 	})
 })
