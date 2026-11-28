@@ -87,8 +87,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # setup-envtest prints the path under --bin-dir as given; go test runs
+      # in the package directory, so it must be absolute.
       - name: Controller suite
         run: |
           make envtest
-          KUBEBUILDER_ASSETS="$(bin/setup-envtest use ${{ matrix.k8s }} --bin-dir bin -p path)" \
+          KUBEBUILDER_ASSETS="$(bin/setup-envtest use ${{ matrix.k8s }} --bin-dir "$PWD/bin" -p path)" \
             go test ./internal/controller/ -count=1
