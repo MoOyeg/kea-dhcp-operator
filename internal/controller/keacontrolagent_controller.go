@@ -23,6 +23,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -75,11 +76,8 @@ func (r *KeaControlAgentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// created before it did are stopped here, leaving their workload alone.
 	setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeDeprecated, "True",
 		reasonControlAgentDeprecated, ctrlAgentDeprecatedMessage)
-	if reason, msg := ctrlAgentSpecProblem(&agent.Spec); reason != "" {
-		setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, "False", reason, msg)
-		agent.Status.Phase = keav1alpha1.PhaseError
-		r.Recorder.Event(agent, corev1.EventTypeWarning, reason, msg)
-		return ctrl.Result{}, r.Status().Update(ctx, agent)
+	if stopped, err := r.stopIfCannotRun(ctx, agent); stopped {
+		return ctrl.Result{}, err
 	}
 
 	// 2. Build env var references for auth credentials.
@@ -290,6 +288,26 @@ const (
 		"configure an HTTP control-socket on each daemon instead (see docs/control-agent.md)"
 )
 
+// stopIfCannotRun reports a spec that cannot run (see ctrlAgentSpecProblem)
+// in the status and returns true, leaving the workload alone. It warns once
+// per problem, not on every reconcile: the condition carries the state, the
+// event marks the change.
+func (r *KeaControlAgentReconciler) stopIfCannotRun(ctx context.Context, agent *keav1alpha1.KeaControlAgent) (bool, error) {
+	reason, msg := ctrlAgentSpecProblem(&agent.Spec)
+	if reason == "" {
+		return false, nil
+	}
+	notValid := string(metav1.ConditionFalse)
+	if prev := findCondition(agent.Status.Conditions, keav1alpha1.ConditionTypeConfigValid); prev == nil ||
+		prev.Status != notValid || prev.Reason != reason {
+		r.Recorder.Event(agent, corev1.EventTypeWarning, reason, msg)
+	}
+	setCondition(&agent.Status.Conditions, keav1alpha1.ConditionTypeConfigValid, notValid, reason, msg)
+	agent.Status.Phase = keav1alpha1.PhaseError
+	agent.Status.ObservedGeneration = agent.Generation
+	return true, r.Status().Update(ctx, agent)
+}
+
 // ctrlAgentSpecProblem returns a ConfigurationValid reason and message when
 // the spec cannot run: no image (ISC publishes none, so there is no default),
 // or a control socket that is not UNIX (the Control Agent reaches daemons
@@ -304,7 +322,7 @@ func ctrlAgentSpecProblem(spec *keav1alpha1.KeaControlAgentSpec) (reason, messag
 			field := [...]string{"control-sockets.dhcp4", "control-sockets.dhcp6", "control-sockets.d2"}[i]
 			if cs != nil && cs.SocketType != "unix" {
 				return "UnsupportedControlSocket", fmt.Sprintf("%s: the Kea Control Agent only reaches daemons over "+
-					"UNIX sockets (socket-type %q); for HTTP configure the daemon's own control-socket", field, cs.SocketType)
+					"UNIX sockets (socket-type %q); for HTTP configure the daemon's own control-socket (see docs/control-agent.md)", field, cs.SocketType)
 			}
 		}
 	}

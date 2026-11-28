@@ -21,9 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,47 +89,38 @@ var _ = Describe("KeaControlAgent Controller", func() {
 	})
 })
 
-// The CRD carries the rules, so the API server rejects a Control Agent that
-// cannot run before the operator sees it, also under KeaServer.spec.controlAgent.
-var _ = Describe("KeaControlAgent validation", func() {
+// The CRD has no rule for the image or the socket type: a CRD rule would
+// also reject the operator's status writes to objects stored before it
+// existed (Kubernetes before 1.33). The API server stores such an object and
+// the operator reports why it cannot run, without deploying it.
+var _ = Describe("KeaControlAgent that cannot run", func() {
 	ctx := context.Background()
-	meta := func(name string) metav1.ObjectMeta {
-		return metav1.ObjectMeta{Name: name, Namespace: testNamespaceDefault}
-	}
-	unix := &keav1alpha1.ControlSocket{SocketType: "unix", SocketName: "/var/run/kea/kea-dhcp4-ctrl.sock"}
 	port := int32(8001)
-	http := &keav1alpha1.ControlSocket{SocketType: testSocketTypeHTTP, SocketPort: &port}
 
-	It("rejects a KeaControlAgent without an image, naming the reason", func() {
-		err := k8sClient.Create(ctx, &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-no-image")})
-		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
-		Expect(err.Error()).To(ContainSubstring("ISC publishes no Kea Control Agent image"))
-	})
+	It("is stored, reported and not deployed", func() {
+		for name, spec := range map[string]keav1alpha1.KeaControlAgentSpec{
+			"kca-no-image": {},
+			"kca-http": {
+				Container: keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
+				ControlSockets: &keav1alpha1.AgentControlSockets{
+					D2: &keav1alpha1.ControlSocket{SocketType: testSocketTypeHTTP, SocketPort: &port}},
+			},
+		} {
+			kca := &keav1alpha1.KeaControlAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespaceDefault}, Spec: spec}
+			Expect(k8sClient.Create(ctx, kca)).To(Succeed())
+			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, kca)).To(Succeed()) })
 
-	It("rejects a non-UNIX control socket", func() {
-		err := k8sClient.Create(ctx, &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-http"),
-			Spec: keav1alpha1.KeaControlAgentSpec{
-				Container:      keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
-				ControlSockets: &keav1alpha1.AgentControlSockets{Dhcp4: unix, D2: http},
-			}})
-		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
-		Expect(err.Error()).To(ContainSubstring("only reaches daemons over UNIX sockets"))
-	})
-
-	It("accepts an explicit image with UNIX sockets", func() {
-		kca := &keav1alpha1.KeaControlAgent{ObjectMeta: meta("kca-ok"),
-			Spec: keav1alpha1.KeaControlAgentSpec{
-				Container:      keav1alpha1.ContainerConfig{Image: testCtrlAgentImage},
-				ControlSockets: &keav1alpha1.AgentControlSockets{Dhcp4: unix},
-			}}
-		Expect(k8sClient.Create(ctx, kca)).To(Succeed())
-		Expect(k8sClient.Delete(ctx, kca)).To(Succeed())
-	})
-
-	It("rejects KeaServer.spec.controlAgent without an image", func() {
-		err := k8sClient.Create(ctx, &keav1alpha1.KeaServer{ObjectMeta: meta("ks-no-image"),
-			Spec: keav1alpha1.KeaServerSpec{ControlAgent: &keav1alpha1.KeaControlAgentSpec{}}})
-		Expect(errors.IsInvalid(err)).To(BeTrue(), "err = %v", err)
-		Expect(err.Error()).To(ContainSubstring("ISC publishes no Kea Control Agent image"))
+			r := &KeaControlAgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: record.NewFakeRecorder(10)}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kca)})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kca), kca)).To(Succeed())
+			cv := findCondition(kca.Status.Conditions, keav1alpha1.ConditionTypeConfigValid)
+			Expect(cv).NotTo(BeNil())
+			Expect(cv.Status).To(Equal(condFalse))
+			Expect(cv.Message).To(ContainSubstring("docs/control-agent.md"))
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: name + "-ctrl-agent", Namespace: testNamespaceDefault}, &appsv1.Deployment{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "Deployment for %s: err = %v", name, err)
+		}
 	})
 })

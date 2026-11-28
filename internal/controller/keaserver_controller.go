@@ -223,14 +223,20 @@ func (r *KeaServerReconciler) reconcileControlAgent(ctx context.Context, server 
 	err := r.Get(ctx, types.NamespacedName{Name: childName, Namespace: server.Namespace}, existing)
 
 	if server.Spec.ControlAgent == nil {
+		removeCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDeprecated)
 		if err == nil {
 			return r.Delete(ctx, existing)
 		}
 		return client.IgnoreNotFound(err)
 	}
 
-	r.Recorder.Event(server, corev1.EventTypeWarning, reasonControlAgentDeprecated,
-		"spec.controlAgent is deprecated: "+ctrlAgentDeprecatedMessage)
+	// The condition carries the deprecation; the event is sent once, when
+	// the condition first appears, not on every reconcile.
+	msg := "spec.controlAgent is deprecated: " + ctrlAgentDeprecatedMessage
+	if findCondition(server.Status.Conditions, keav1alpha1.ConditionTypeDeprecated) == nil {
+		r.Recorder.Event(server, corev1.EventTypeWarning, reasonControlAgentDeprecated, msg)
+	}
+	setCondition(&server.Status.Conditions, keav1alpha1.ConditionTypeDeprecated, "True", reasonControlAgentDeprecated, msg)
 	child := &keav1alpha1.KeaControlAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      childName,

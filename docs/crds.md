@@ -160,9 +160,11 @@ All other fields (database, hooks, HA, logging, container settings) are identica
 
 ## KeaControlAgent (kca)
 
-> **Deprecated.** ISC deprecated the Kea Control Agent in Kea 3.0, removed it
-> in Kea 3.2, and publishes no Control Agent image, so `container.image` is
-> required. Use an HTTP `control-socket` on each daemon instead. See
+> **Deprecated, and not functional as deployed.** ISC deprecated the Kea
+> Control Agent in Kea 3.0, removed it in Kea 3.2, and publishes no Control
+> Agent image, so `container.image` is required. Even with an image, the
+> operator-managed agent runs in its own pod and cannot reach the daemons'
+> control sockets. Use an HTTP `control-socket` on each daemon instead. See
 > [control-agent.md](control-agent.md) for the upgrade notes and the
 > migration checklist.
 

@@ -321,14 +321,6 @@ spec:
                         - socket-type
                         type: object
                     type: object
-                    x-kubernetes-validations:
-                    - message: 'the Kea Control Agent only reaches daemons over UNIX
-                        sockets: set socket-type: unix (for HTTP, configure the daemon''s
-                        own control-socket instead; see docs/control-agent.md)'
-                      rule: (!has(self.dhcp4) || self.dhcp4.socket__dash__type ==
-                        'unix') && (!has(self.dhcp6) || self.dhcp6.socket__dash__type
-                        == 'unix') && (!has(self.d2) || self.d2.socket__dash__type
-                        == 'unix')
                   hooks-libraries:
                     description: Hook libraries to load.
                     items:
@@ -1426,12 +1418,6 @@ spec:
                     - secretRef
                     type: object
                 type: object
-                x-kubernetes-validations:
-                - message: 'container.image is required: ISC publishes no Kea Control
-                    Agent image, so the operator has no default (the Control Agent
-                    is deprecated; see docs/control-agent.md)'
-                  rule: has(self.container) && has(self.container.image) && size(self.container.image)
-                    > 0
               dhcp4:
                 description: DHCPv4 server configuration. When set, creates a KeaDhcp4Server.
                 properties:

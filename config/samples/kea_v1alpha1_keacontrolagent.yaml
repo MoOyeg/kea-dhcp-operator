@@ -1,6 +1,8 @@
 # DEPRECATED: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it in
 # Kea 3.2, and publishes no Control Agent image. Prefer an HTTP control-socket
-# on each daemon; see docs/control-agent.md. This sample is not offered in the
+# on each daemon; see docs/control-agent.md. The operator-managed agent runs in
+# its own pod and cannot reach the daemons' control sockets, so this deploys an
+# agent that cannot forward commands. This sample is not offered in the
 # OperatorHub examples; it documents the remaining KeaControlAgent support.
 apiVersion: kea.openshift.io/v1alpha1
 kind: KeaControlAgent

@@ -37,15 +37,6 @@ const testCtrlAgentImage = "quay.io/example/kea-ctrl-agent:3.0.2"
 
 const testSocketTypeHTTP = "http"
 
-func findCondition(conds []keav1alpha1.ConditionStatus, t string) *keav1alpha1.ConditionStatus {
-	for i := range conds {
-		if conds[i].Type == t {
-			return &conds[i]
-		}
-	}
-	return nil
-}
-
 // A KeaControlAgent stored before the CRD required an image (or UNIX sockets)
 // must not be deployed: the operator reports why and leaves the workload
 // alone. Every KeaControlAgent carries the Deprecated condition.

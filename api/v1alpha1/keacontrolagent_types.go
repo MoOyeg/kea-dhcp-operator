@@ -24,8 +24,8 @@ import (
 // ========== Control Agent Types ==========
 
 // AgentControlSockets defines the UNIX control sockets for each managed Kea daemon.
-// The Kea Control Agent only reaches daemons over UNIX sockets.
-// +kubebuilder:validation:XValidation:rule="(!has(self.dhcp4) || self.dhcp4.socket__dash__type == 'unix') && (!has(self.dhcp6) || self.dhcp6.socket__dash__type == 'unix') && (!has(self.d2) || self.d2.socket__dash__type == 'unix')",message="the Kea Control Agent only reaches daemons over UNIX sockets: set socket-type: unix (for HTTP, configure the daemon's own control-socket instead; see docs/control-agent.md)"
+// The Kea Control Agent only reaches daemons over UNIX sockets; the operator
+// reports any other socket type as UnsupportedControlSocket.
 type AgentControlSockets struct {
 	// Control socket for the DHCPv4 server.
 	// +optional
@@ -74,7 +74,10 @@ type AuthClient struct {
 // ========== KeaControlAgent Spec ==========
 
 // KeaControlAgentSpec defines the desired state of a Kea Control Agent deployment.
-// +kubebuilder:validation:XValidation:rule="has(self.container) && has(self.container.image) && size(self.container.image) > 0",message="container.image is required: ISC publishes no Kea Control Agent image, so the operator has no default (the Control Agent is deprecated; see docs/control-agent.md)"
+// container.image is required: ISC publishes no Kea Control Agent image. The
+// operator, not the CRD, enforces this (status reason ImageRequired). A CRD
+// rule would also reject the operator's status writes to objects stored before
+// the rule existed, on Kubernetes before 1.33.
 type KeaControlAgentSpec struct {
 	// Container configuration (image, resources, pull policy). container.image
 	// is required: ISC publishes no Kea Control Agent image.
@@ -141,7 +144,7 @@ type KeaControlAgentStatus struct {
 // The resource is deprecated: ISC deprecated the Kea Control Agent in Kea 3.0 and removed it
 // in Kea 3.2. Each daemon serves its own HTTP control socket instead; see
 // docs/control-agent.md.
-// +kubebuilder:deprecatedversion:warning="kea.openshift.io/v1alpha1 KeaControlAgent is deprecated: ISC removed the Kea Control Agent in Kea 3.2. Use the daemons' HTTP control sockets; see docs/control-agent.md"
+// +kubebuilder:deprecatedversion:warning="kea.openshift.io/v1alpha1 KeaControlAgent is deprecated and cannot reach daemons in other pods; it has no default image (set spec.container.image). Use the daemons' HTTP control sockets; see docs/control-agent.md"
 type KeaControlAgent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

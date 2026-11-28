@@ -6,8 +6,16 @@ in Kea 3.2. Since Kea 3.0, each daemon (`kea-dhcp4`, `kea-dhcp6`,
 `kea-dhcp-ddns`) can serve its own HTTP control socket, which replaces the
 agent.
 
+> **The operator-managed Control Agent cannot reach the daemons.** It runs in
+> its own pod, and each daemon's UNIX control socket sits in a volume private
+> to the daemon's pod (see [below](#what-the-operator-managed-control-agent-can-reach)).
+> Setting `container.image` gets the agent deployed, but it does not make it
+> work: commands it forwards to `kea-dhcp4`, `kea-dhcp6` or `kea-dhcp-ddns`
+> fail. This was true before this release as well. Migrate to the daemons'
+> own HTTP control sockets.
+
 The operator still reconciles `KeaControlAgent` for existing users, but it
-will drop the resource in a future release. Plan your migration now.
+will drop the resource in a future release.
 
 ## Upgrade notes (this release)
 
@@ -15,28 +23,32 @@ will drop the resource in a future release. Plan your migration now.
   Control Agent image to `docker.cloudsmith.io/isc/docker/kea-ctrl-agent:3.0.2`,
   but that image does not exist: ISC publishes no Control Agent image. A
   `KeaControlAgent` without `spec.container.image` therefore never started.
-  - **New objects:** the API server rejects a `KeaControlAgent`, or a
-    `KeaServer` with `spec.controlAgent`, that has no `container.image`. The
-    error says why.
-  - **Objects stored before the upgrade:** the operator sets
-    `ConfigurationValid=False` with reason `ImageRequired`, sets the phase to
-    `Error`, and emits a Warning event. It leaves the existing workload
-    alone. Set an image (see [Keeping the Control Agent](#keeping-the-control-agent-for-now))
-    or delete the object.
-  - **Updating such an object** works on Kubernetes 1.30 and later, where
-    CRD validation ratcheting is on by default: unchanged invalid fields are
-    not re-checked. On older clusters, an update is rejected until the image
-    is set. Deletion always works.
-- **Objects that already set `container.image`** keep working unchanged.
+  Now the operator does not deploy such an object. It sets
+  `ConfigurationValid=False` with reason `ImageRequired` and the phase to
+  `Error`, emits one Warning event, and leaves any existing workload as it
+  is. This applies to objects stored before the upgrade and to new ones.
 - **Control sockets must be UNIX.** `control-sockets.{dhcp4,dhcp6,d2}` must
   use `socket-type: unix`. Kea's Control Agent only reaches daemons over UNIX
-  sockets and rejects `socket-port`. The API server now rejects other socket
-  types; existing objects get `ConfigurationValid=False` with reason
-  `UnsupportedControlSocket`.
+  sockets and rejects `socket-port`. An object with another socket type is
+  not deployed either: `ConfigurationValid=False` with reason
+  `UnsupportedControlSocket`, one Warning event.
+- **Recovery.** Set `container.image` and use UNIX sockets, and the operator
+  reconciles the object again. That restores reconciliation only; see the
+  note above about what the deployed agent can reach.
+- **Objects that already set `container.image`** with UNIX sockets are
+  reconciled as before. That says nothing about whether they work; see the
+  note above.
+- **The API server does not reject these objects.** The checks live in the
+  operator, not in the CRD. On Kubernetes before 1.33 (OpenShift 4.19 and
+  earlier), a CRD rule is also applied to status updates, so the operator
+  could not have reported `ImageRequired` on objects stored before the
+  upgrade. The deprecation warning that `kubectl`/`oc` print says that
+  `container.image` is required.
 - **Deprecation is visible.** `kubectl`/`oc` print a deprecation warning for
   every request on `keacontrolagents`. Each `KeaControlAgent` carries a
-  `Deprecated=True` condition, and a `KeaServer` with `spec.controlAgent`
-  gets a `ControlAgentRemovedUpstream` Warning event.
+  `Deprecated=True` condition, which stays after recovery. A `KeaServer` with
+  `spec.controlAgent` carries the same condition and gets one
+  `ControlAgentRemovedUpstream` Warning event when the condition appears.
 - **Not offered in OperatorHub.** The Control Agent example is no longer in
   the OperatorHub examples, and the `KeaServer` example no longer includes
   `controlAgent`.
@@ -53,6 +65,13 @@ Check whether anything actually depends on your Control Agent before you
 spend effort keeping it.
 
 ## Migrating to daemon HTTP control sockets
+
+> **Standalone servers only, for now.** On a server with `high-availability`
+> set, the operator uses `control-socket.socket-port` as the HA listener's
+> port too, so an HTTP control socket and the HA listener bind the same port
+> and `kea-dhcp4` fails to start. Don't add an HTTP control socket to an HA
+> server until the operator gives the two endpoints separate ports (see the
+> checklist below).
 
 Configure an HTTP control socket on the daemon itself:
 
@@ -90,10 +109,16 @@ API clients change in two ways:
 
 ## Keeping the Control Agent for now
 
-To keep the Control Agent on Kea 3.0 until you migrate, you have to build and
-maintain the image yourself. It won't exist for Kea 3.2 or later. ISC ships
-`kea-ctrl-agent` as an Alpine package (`isc-kea-ctrl-agent`) in the same
-repository its images install from. For example:
+> **This keeps the object reconciling; it does not make the agent work.** An
+> image built this way lets the operator deploy the Control Agent again, but
+> the deployed agent still cannot reach the daemons' sockets (see
+> [above](#what-the-operator-managed-control-agent-can-reach)). Use it only to
+> keep an existing object out of the `Error` phase while you migrate.
+
+To build an image on Kea 3.0, you have to build and maintain it yourself. It
+won't exist for Kea 3.2 or later. ISC ships `kea-ctrl-agent` as an Alpine
+package (`isc-kea-ctrl-agent`) in the same repository its images install
+from. For example:
 
 ```Dockerfile
 # Pin the base by digest; this example uses the operator's default kea-dhcp4 3.0.2.
