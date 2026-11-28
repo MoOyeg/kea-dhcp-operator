@@ -75,7 +75,7 @@ See [CRD Reference](crds.md) for all fields and options.
                                    │  Deployment         │
                                    │   volumes:          │
                                    │    /etc/kea (config)│
-                                   │    /run/kea (socks) │
+                                   │    /var/run/kea     │
                                    │    /var/lib/kea     │
                                    │    /etc/kea/tls     │
                                    │   annotation:       │

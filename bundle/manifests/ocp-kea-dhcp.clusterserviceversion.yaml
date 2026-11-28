@@ -17,11 +17,11 @@ metadata:
           "spec": {
             "control-sockets": {
               "dhcp4": {
-                "socket-name": "/run/kea/kea-dhcp4-ctrl.sock",
+                "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock",
                 "socket-type": "unix"
               },
               "dhcp6": {
-                "socket-name": "/run/kea/kea-dhcp6-ctrl.sock",
+                "socket-name": "/var/run/kea/kea-dhcp6-ctrl.sock",
                 "socket-type": "unix"
               }
             },
@@ -132,7 +132,7 @@ metadata:
           },
           "spec": {
             "control-socket": {
-              "socket-name": "/run/kea/kea-dhcp4-ctrl.sock",
+              "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock",
               "socket-type": "unix"
             },
             "high-availability": {
@@ -245,7 +245,7 @@ metadata:
             "option-data": [
               {
                 "data": "2001:db8:1::dead:beef",
-                "name": "dns-recursive-name-server"
+                "name": "dns-servers"
               }
             ],
             "placement": {
@@ -353,7 +353,7 @@ metadata:
             "controlAgent": {
               "control-sockets": {
                 "dhcp4": {
-                  "socket-name": "/run/kea/kea-dhcp4-ctrl.sock",
+                  "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock",
                   "socket-type": "unix"
                 }
               },
@@ -373,7 +373,7 @@ metadata:
             },
             "dhcp4": {
               "control-socket": {
-                "socket-name": "/run/kea/kea-dhcp4-ctrl.sock",
+                "socket-name": "/var/run/kea/kea-dhcp4-ctrl.sock",
                 "socket-type": "unix"
               },
               "interfaces-config": {

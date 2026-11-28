@@ -33,7 +33,7 @@ spec:
             data: "8.8.8.8, 8.8.4.4"
     control-socket:
       socket-type: unix
-      socket-name: /run/kea/kea-dhcp4-ctrl.sock
+      socket-name: /var/run/kea/kea-dhcp4-ctrl.sock
     loggers:
       - name: kea-dhcp4
         severity: INFO
@@ -47,7 +47,7 @@ spec:
     control-sockets:
       dhcp4:
         socket-type: unix
-        socket-name: /run/kea/kea-dhcp4-ctrl.sock
+        socket-name: /var/run/kea/kea-dhcp4-ctrl.sock
     loggers:
       - name: kea-ctrl-agent
         severity: INFO
