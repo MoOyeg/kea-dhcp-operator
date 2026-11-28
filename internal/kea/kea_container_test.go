@@ -19,21 +19,24 @@ package kea
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 
 	"github.com/openshift/ocp-kea-dhcp/internal/resources"
 )
 
 // shippedKeaImages are the images the operator deploys when a CR names none.
 // The container tests run these, so a change to an operator default changes
-// what the tests check.
+// what the tests check. The Control Agent has no default image (ISC publishes
+// none); its tests build a fixture, see ctrlAgentFixture.
 var shippedKeaImages = map[string]string{
-	resources.ComponentDhcp4:     resources.DefaultKeaDhcp4Image,
-	resources.ComponentDhcp6:     resources.DefaultKeaDhcp6Image,
-	resources.ComponentCtrlAgent: resources.DefaultKeaCtrlAgentImage,
-	resources.ComponentDdns:      resources.DefaultKeaDhcpDdnsImage,
+	resources.ComponentDhcp4: resources.DefaultKeaDhcp4Image,
+	resources.ComponentDhcp6: resources.DefaultKeaDhcp6Image,
+	resources.ComponentDdns:  resources.DefaultKeaDhcpDdnsImage,
 }
 
 // keaContainers runs the Kea container images in a test.
@@ -106,6 +109,15 @@ func (k keaContainers) image(t *testing.T, component string) string {
 	return image
 }
 
+// pinned returns image (already returned by k.image) as <repository>@<digest>.
+func pinned(image string) string {
+	digest, ok := pulledDigests.Load(image)
+	if !ok {
+		panic("pinned called before image " + image + " was pulled")
+	}
+	return image[:strings.LastIndex(image, ":")] + "@" + digest.(string)
+}
+
 func TestKeaTestImageFollowsShippedDefaults(t *testing.T) {
 	const mirror = "mirror.example.com/isc"
 	tagOf := func(image string) string { return image[strings.LastIndex(image, ":")+1:] }
@@ -114,16 +126,49 @@ func TestKeaTestImageFollowsShippedDefaults(t *testing.T) {
 	}{
 		{resources.ComponentDhcp4, "", "", resources.DefaultKeaDhcp4Image},
 		{resources.ComponentDhcp6, "", "", resources.DefaultKeaDhcp6Image},
-		{resources.ComponentCtrlAgent, "", "", resources.DefaultKeaCtrlAgentImage},
 		{resources.ComponentDdns, "", "", resources.DefaultKeaDhcpDdnsImage},
 		{resources.ComponentDhcp4, mirror + "/", "", mirror + "/kea-dhcp4:" + tagOf(resources.DefaultKeaDhcp4Image)},
 		{resources.ComponentDdns, "", "9.9.9",
 			strings.TrimSuffix(resources.DefaultKeaDhcpDdnsImage, tagOf(resources.DefaultKeaDhcpDdnsImage)) + "9.9.9"},
-		{resources.ComponentCtrlAgent, mirror, "9.9.9", mirror + "/kea-ctrl-agent:9.9.9"},
+		{resources.ComponentDhcp6, mirror, "9.9.9", mirror + "/kea-dhcp6:9.9.9"},
 	}
 	for _, tc := range cases {
 		if got := keaTestImage(tc.component, tc.repo, tc.tag); got != tc.want {
 			t.Errorf("keaTestImage(%q, %q, %q) = %q, want %q", tc.component, tc.repo, tc.tag, got, tc.want)
 		}
+	}
+}
+
+// loadSample reads a CR from config/samples into obj.
+func loadSample(t *testing.T, file string, obj interface{}) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "config", "samples", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, obj); err != nil {
+		t.Fatalf("parsing %s: %v", file, err)
+	}
+}
+
+// keaParserAccepts runs `<binary> -t` from image on data and fails the test
+// if Kea rejects the configuration or logs an error while checking it.
+func keaParserAccepts(t *testing.T, k keaContainers, image, binary string, data []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := binary + ".conf"
+	if err := os.WriteFile(filepath.Join(dir, cfg), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The Kea binaries may carry file capabilities, so the container needs them to exec.
+	out, err := exec.Command(k.podman, "run", "--rm",
+		"--cap-add=NET_RAW", "--cap-add=NET_BIND_SERVICE", "--cap-add=NET_ADMIN",
+		"-v", dir+":/cfg:ro,z", "--entrypoint", "/usr/sbin/"+binary,
+		image, "-t", "/cfg/"+cfg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s -t rejected the rendered config: %v\n%s\n--- config ---\n%s", binary, err, out, data)
+	}
+	if strings.Contains(string(out), "ERROR") {
+		t.Fatalf("%s -t logged an error:\n%s\n--- config ---\n%s", binary, out, data)
 	}
 }
