@@ -103,8 +103,8 @@ API clients change in two ways:
 | **Stork** | Doesn't use the Control Agent. The `stork-agent` sidecar runs inside each daemon pod. The e2e Stork test passes with no Control Agent deployed. |
 | **Probes** | The operator defines no probes on Kea daemon containers, so nothing to migrate. |
 | **HTTP control socket on an HA server** | **Blocked today.** The operator also uses `control-socket.socket-port` as the HA listener port, so an HTTP control socket and the HA listener would bind the same port. `kea-dhcp4` 3.0.2 then fails to start with `CmdHttpListener::run failed: unable to setup TCP acceptor`. Use HTTP control sockets on standalone servers only until the operator gives the HA listener its own port. |
-| **Service for the control port** | The operator does not create one. Add your own Service if clients outside the pod need the endpoint. |
-| **Authentication and TLS** | Kea 3.0 supports both on daemon HTTP control sockets, but the CRDs don't expose those fields yet. Until they do, bind to `127.0.0.1`, or restrict access with a NetworkPolicy. An HTTP control socket accepts every Kea command, including configuration changes. |
+| **Service for the control port** | For `KeaDhcp4Server` and `KeaDhcp6Server` with an HTTP control socket, the operator creates a ClusterIP Service `<name>-dhcp4` / `<name>-dhcp6` on `socket-port`, reachable from every namespace unless a NetworkPolicy says otherwise. For `KeaDhcpDdns` it creates none; add your own if clients outside the pod need the endpoint. |
+| **Authentication and TLS** | Kea 3.0 supports both on daemon HTTP control sockets, but the CRDs don't expose those fields yet. An HTTP control socket accepts every Kea command, including configuration changes, so until they do: bind to `127.0.0.1` (the Service then reaches nothing, and only processes in the pod, such as the Stork agent, can connect), or restrict the Service's port to your API clients with a NetworkPolicy. |
 | **Your API clients** | Point them at the daemon endpoints (see above) and test every command they send. |
 
 ## Keeping the Control Agent for now
