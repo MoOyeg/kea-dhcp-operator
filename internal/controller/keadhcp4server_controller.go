@@ -95,10 +95,7 @@ func (r *KeaDhcp4ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// 2. Auto-fill empty HA peer URLs from the StatefulSet naming convention.
 	if haEnabled {
-		haPort := int32(8000)
-		if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketPort != nil {
-			haPort = *server.Spec.ControlSocket.SocketPort
-		}
+		haPort, _ := kea.HAListenerPort(server.Spec.HighAvailability, server.Spec.ControlSocket)
 		fillPeerURLs(server.Spec.HighAvailability, server.Namespace, server.Name, component, haPort)
 	}
 
@@ -327,10 +324,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4HAWorkload(
 	var readyReplicas int32
 
 	// HA mode: create headless Service + StatefulSet.
-	haPort := int32(8000)
-	if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketPort != nil {
-		haPort = *server.Spec.ControlSocket.SocketPort
-	}
+	haPort, _ := kea.HAListenerPort(server.Spec.HighAvailability, server.Spec.ControlSocket)
 
 	// Headless Service for StatefulSet DNS.
 	hlSvc := resources.BuildHeadlessService(resources.ServiceParams{
@@ -516,7 +510,7 @@ func (r *KeaDhcp4ServerReconciler) reconcileDhcp4ControlService(ctx context.Cont
 	if server.Spec.ControlSocket == nil || server.Spec.ControlSocket.SocketType != "http" {
 		return nil
 	}
-	port := int32(8000)
+	port := kea.DefaultHAListenerPort
 	if server.Spec.ControlSocket.SocketPort != nil {
 		port = *server.Spec.ControlSocket.SocketPort
 	}

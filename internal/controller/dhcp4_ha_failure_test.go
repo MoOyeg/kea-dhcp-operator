@@ -197,12 +197,17 @@ func TestDhcp4HAInvalidSpecFailsBeforeAnyWrite(t *testing.T) {
 	invalidDDNS.Spec.DDNSTTL = &ttl
 	invalidDDNS.Spec.DDNSTTLPercent = ttlPercentJSON(pct)
 
+	port := int32(8000)
+	sharedPort := haDhcp4Server(2)
+	sharedPort.Spec.ControlSocket = &keav1alpha1.ControlSocket{SocketType: testSocketTypeHTTP, SocketAddress: "0.0.0.0", SocketPort: &port}
+
 	tests := []struct {
 		name    string
 		server  *keav1alpha1.KeaDhcp4Server
 		wantErr string
 	}{
 		{"DDNS rejected by the renderer", invalidDDNS, "cannot specify both ddns-ttl-percent and ddns-ttl"},
+		{"HTTP control socket on the HA listener port", sharedPort, "set high-availability.http-listener-port"},
 		{"ordinal without a declared peer", haDhcp4Server(3), "ordinal 2 has no declared high-availability peer"},
 		{"duplicate peer names", haDhcp4Server(2, testPeerPrimary, testPeerPrimary), `duplicate peer name "server1"`},
 	}

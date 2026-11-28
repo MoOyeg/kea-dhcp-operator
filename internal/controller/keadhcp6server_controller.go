@@ -77,10 +77,7 @@ func (r *KeaDhcp6ServerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 2. Auto-fill empty HA peer URLs from the StatefulSet naming convention.
 	component := "dhcp6"
 	if server.Spec.HighAvailability != nil {
-		haPort := int32(8000)
-		if server.Spec.ControlSocket != nil && server.Spec.ControlSocket.SocketPort != nil {
-			haPort = *server.Spec.ControlSocket.SocketPort
-		}
+		haPort, _ := kea.HAListenerPort(server.Spec.HighAvailability, server.Spec.ControlSocket)
 		fillPeerURLs(server.Spec.HighAvailability, server.Namespace, server.Name, component, haPort)
 	}
 
@@ -293,7 +290,7 @@ func (r *KeaDhcp6ServerReconciler) reconcileDhcp6ControlService(ctx context.Cont
 	if server.Spec.ControlSocket == nil || server.Spec.ControlSocket.SocketType != "http" {
 		return nil
 	}
-	port := int32(8000)
+	port := kea.DefaultHAListenerPort
 	if server.Spec.ControlSocket.SocketPort != nil {
 		port = *server.Spec.ControlSocket.SocketPort
 	}

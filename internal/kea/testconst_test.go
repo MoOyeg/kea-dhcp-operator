@@ -62,5 +62,7 @@ const (
 	testServerName2      = "server2"
 	testRolePrimary      = "primary"
 	testRoleStandby      = "standby"
+	testRoleSecondary    = "secondary"
+	testCtrlSocket4      = "/var/run/kea/kea4-ctrl-socket"
 	testPrimaryServer    = "primary-server"
 )

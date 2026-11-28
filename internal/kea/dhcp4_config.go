@@ -129,9 +129,12 @@ func (r *Dhcp4ConfigRenderer) renderJSONInternal(serverNameOverride string) ([]b
 	hooks := renderHooksLibraries(s.HooksLibraries)
 	hooks = appendDBHooks(hooks, s.LeaseDatabase, s.HostsDatabase, s.HostsDatabases)
 	if s.HighAvailability != nil {
-		var haPort int32
-		if s.ControlSocket != nil && s.ControlSocket.SocketPort != nil {
-			haPort = *s.ControlSocket.SocketPort
+		if err := checkHAListenerPort(s.HighAvailability, s.ControlSocket); err != nil {
+			return nil, err
+		}
+		var haPort int32 // 0: Kea takes the port from this server's peer URL
+		if port, explicit := HAListenerPort(s.HighAvailability, s.ControlSocket); explicit {
+			haPort = port
 		}
 		haHooks := renderHAHooks(s.HighAvailability, serverNameOverride, haPort)
 		hooks = append(hooks, haHooks...)

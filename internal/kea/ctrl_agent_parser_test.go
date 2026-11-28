@@ -73,7 +73,7 @@ func TestCtrlAgentConfigAcceptedByKea(t *testing.T) {
 		HTTPHost: listenAnyIP4,
 		HTTPPort: &port,
 		ControlSockets: &keav1alpha1.AgentControlSockets{
-			Dhcp4: &keav1alpha1.ControlSocket{SocketType: testSocketTypeUnix, SocketName: "/var/run/kea/kea4-ctrl-socket"},
+			Dhcp4: &keav1alpha1.ControlSocket{SocketType: testSocketTypeUnix, SocketName: testCtrlSocket4},
 			Dhcp6: &keav1alpha1.ControlSocket{SocketType: testSocketTypeUnix, SocketName: "/var/run/kea/kea6-ctrl-socket"},
 			D2:    &keav1alpha1.ControlSocket{SocketType: testSocketTypeUnix, SocketName: "/var/run/kea/kea-ddns-ctrl-socket"},
 		},
